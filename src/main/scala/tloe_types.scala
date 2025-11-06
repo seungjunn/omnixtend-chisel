@@ -3,15 +3,7 @@ package omnixtend
 import chisel3._
 import chisel3.util._
 
-object TLOEHeaderConstants {
-  val TLOE_NAK = 0.U(1.W)
-  val TLOE_ACK = 1.U(1.W)
-
-  val TLOE_TYPE_NORMAL = 0.U(2.W)
-  val TLOE_TYPE_ACKONLY = 1.U(2.W)
-  val TLOE_TYPE_OPEN = 2.U(2.W)
-  val TLOE_TYPE_CLOSE = 3.U(2.W)
-}
+import OmniXtendConstants._
 
 /**
  * EthernetHeader class defines the structure of an Ethernet header.
@@ -63,6 +55,11 @@ class TLMessageLow extends Bundle {
   val addr      = UInt(64.W)    // Address
 }
 
+class tloeFrame extends Bundle {
+  val tloeHeader  = new tloeHeader
+  val tlMsgHigh   = new TLMessageHigh
+  val tlMsgLow    = new TLMessageLow
+}
 /**
  * TloePacket class defines the structure of a TLoE packet.
  */
@@ -107,96 +104,73 @@ object TloePacGen {
   }
 
   /**
-   * Extracts the EtherType field from a packet.
-   * @param packet A vector of UInts representing the packet.
-   * @return The EtherType field as a 16-bit UInt.
+   * Converts a 512-bit UInt from little-endian to big-endian format.
+   * This function processes the input as 8 chunks of 64-bit data, converting each chunk
+   * to big-endian and then combining them in the correct order.
+   * 
+   * @param value A 512-bit UInt to be converted.
+   * @return A 512-bit UInt in big-endian format.
    */
-  def getEtherType(packet: Vec[UInt]): UInt = {
-    val seqNum = toBigEndian(packet(1))(31, 16)
-    seqNum
+  def toBigEndian512(value: UInt): UInt = {
+    require(value.getWidth == 512, "Input must be 512 bits wide")  // Ensure the input is 512 bits wide
+
+    // Convert each 64-bit chunk to big-endian
+    val chunk0 = toBigEndian(value(63, 0))      // bits 63:0
+    val chunk1 = toBigEndian(value(127, 64))    // bits 127:64
+    val chunk2 = toBigEndian(value(191, 128))   // bits 191:128
+    val chunk3 = toBigEndian(value(255, 192))   // bits 255:192
+    val chunk4 = toBigEndian(value(319, 256))   // bits 319:256
+    val chunk5 = toBigEndian(value(383, 320))   // bits 383:320
+    val chunk6 = toBigEndian(value(447, 384))   // bits 447:384
+    val chunk7 = toBigEndian(value(511, 448))   // bits 511:448
+
+    // Combine all chunks in the correct order (chunk7 is most significant)
+    Cat(chunk7, chunk6, chunk5, chunk4, chunk3, chunk2, chunk1, chunk0)
   }
 
   /**
-   * Extracts the Sequence Number field from a packet.
-   * @param packet A vector of UInts representing the packet.
-   * @return The Sequence Number as a 22-bit UInt.
+   * Converts a 512-bit UInt from little-endian to big-endian format (CORRECTED VERSION).
+   * This function properly reverses both byte order within each 64-bit chunk AND
+   * the order of chunks themselves for complete endianness conversion.
+   * 
+   * @param value A 512-bit UInt to be converted.
+   * @return A 512-bit UInt in big-endian format.
    */
-  def getSeqNum(packet: Vec[UInt]): UInt = {
-    val seqNum = Cat((toBigEndian(packet(1)))(5, 0), (toBigEndian(packet(2)))(63, 48))
-    seqNum
+  def toBigEndian2(value: UInt): UInt = {
+    require(value.getWidth == 512, "Input must be 512 bits wide")  // Ensure the input is 512 bits wide
+
+    // Convert each 64-bit chunk to big-endian (reverse bytes within each chunk)
+    val chunk0 = toBigEndian(value(63, 0))      // bits 63:0 (LSB)
+    val chunk1 = toBigEndian(value(127, 64))    // bits 127:64
+    val chunk2 = toBigEndian(value(191, 128))   // bits 191:128
+    val chunk3 = toBigEndian(value(255, 192))   // bits 255:192
+    val chunk4 = toBigEndian(value(319, 256))   // bits 319:256
+    val chunk5 = toBigEndian(value(383, 320))   // bits 383:320
+    val chunk6 = toBigEndian(value(447, 384))   // bits 447:384
+    val chunk7 = toBigEndian(value(511, 448))   // bits 511:448 (MSB)
+
+    // Reverse chunk order: place chunk0 (originally LSB) at MSB position
+    // This completes the endianness conversion at both byte and chunk level
+    Cat(chunk0, chunk1, chunk2, chunk3, chunk4, chunk5, chunk6, chunk7)
   }
 
-  def getSeqNumNoEndian(packet: Vec[UInt]): UInt = {
-    val seqNum = Cat(packet(1)(5, 0), packet(2)(63, 48))
-    seqNum
+/*
+  def getSeqNum3(packet: UInt): UInt = {
+    val result = packet(4213, 4192)
+    result
   }
+  */
 
-  /**
-   * Extracts the Sequence Number Acknowledgment field from a packet.
-   * @param packet A vector of UInts representing the packet.
-   * @return The Sequence Number Acknowledgment as a 22-bit UInt.
-   */
-  def getSeqNumAck(packet: Vec[UInt]): UInt = {
-    val seqNumAck = toBigEndian(packet(2))(47, 26)  // Extracts bits 23:21 from packet(2)
-    seqNumAck
-  }
-
-  def getMsgType(packet: Vec[UInt]): UInt = {
-    val msgType = toBigEndian(packet(1))(12, 9)
-    msgType
-  }
-
-  /**
-   * Extracts the Channel ID from a packet.
-   * @param packet A vector of UInts representing the packet.
-   * @return The Channel ID as a 3-bit UInt.
-   */
-  def getChan(packet: Vec[UInt]): UInt = {
-    val chan = toBigEndian(packet(2))(23, 21)  // Extracts bits 23:21 from packet(2)
-    chan
-  }
-
-  /**
-   * Extracts the Credit field from a packet.
-   * @param packet A vector of UInts representing the packet.
-   * @return The Credit field as a 5-bit UInt.
-   */
-  def getCredit(packet: Vec[UInt]): UInt = {
-    val credit = toBigEndian(packet(2))(20, 16)  // Extracts bits 20:16 from packet(2) 
-    credit
-  }
-
-  /**
-   * Extracts a Mask field from a packet.
-   * The mask is used to define which parts of the packet are valid.
-   * @param packet A vector of UInts representing the packet.
-   * @param size The number of 64-bit elements in the packet.
-   * @return The mask as a 64-bit UInt.
-   */
-  def getMask(packet: Vec[UInt], size: UInt): UInt = {
-    val mask = Cat(toBigEndian(packet(size-2.U))(15, 0), toBigEndian(packet(size-1.U))(63, 16))
-    mask
-  }
-
-  def getType(packet: Vec[UInt]): UInt = {
-    // msgType is in the first 64-bit word (packet(0)) at bits 63-60
-    val msgType = toBigEndian(packet(1))(12, 9)
-    msgType
-  }
-
-  def getAck(packet: Vec[UInt]): UInt = {
-    val ack = toBigEndian(packet(2))(25, 25)
-    ack
-  }
-
-  // 패킷 크기 계산 함수
-  def getPacketSize(size: UInt): UInt = {
-    // size는 2의 거듭제곱으로 표현된 데이터 크기 (바이트 단위)
-    // 예: size=3이면 8바이트 (2^3)
-    // 패킷 크기는 64비트(8바이트) 단위로 계산
-    // 헤더(8바이트) + 데이터(2^size 바이트) + 마스크(1바이트) + 패딩
-    val dataSize = 1.U << size
-    val totalSize = (dataSize + 9.U + 7.U) >> 3.U  // (데이터 + 헤더+마스크 + 7) / 8 (올림)
-    totalSize
+  // Optimized getFlitSize with nested Mux instead of switch
+  def getFlitSize(chan: UInt, opcode: UInt, size: UInt): UInt = {
+    Mux(chan === CHANNEL_A,
+      Mux(opcode === A_GET_OPCODE, 2.U,
+        Mux(opcode === A_PUTFULLDATA_OPCODE, 2.U + ((1.U << size) >> 3.U),
+          0.U)),
+      Mux(chan === CHANNEL_D,
+        Mux(opcode === D_ACCESSACK_OPCODE, 1.U,
+          Mux(opcode === D_ACCESSACKDATA_OPCODE, 1.U + ((1.U << size) >> 3.U),
+            0.U)),
+        0.U))
   }
 }

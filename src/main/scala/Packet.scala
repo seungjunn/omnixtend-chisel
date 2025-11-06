@@ -3,77 +3,9 @@ package omnixtend
 import chisel3._
 import chisel3.util._
 
-// 이더넷 헤더 상수를 별도 객체로 분리
-object OXFabricEther {
-  val srcMac = "h123456789ABC".U
-  val destMac = "h001232FFFFFA".U
-  val etherType = "hAAAA".U
-
-  // 이더넷 헤더 설정 함수 - 타입 변경
-  def populateHeader(ethHeader: EthernetHeader): Unit = {
-    ethHeader.destMAC := destMac
-    ethHeader.srcMAC := srcMac
-    ethHeader.etherType := etherType
-  }
-}
+import OmniXtendConstants._
 
 object OXPacket {
-
-  /** Creates a packet to initiate an OmniXtend open connection.
-    *
-    * @param seq
-    *   Sequence number for the packet.
-    * @param chan
-    *   Channel ID.
-    * @param credit
-    *   Credit information for the connection.
-    * @return
-    *   A UInt representing the full packet with padding.
-    */
-  def openConnection(seq: UInt, chan: UInt, credit: UInt): UInt = {
-    // Create a new instance of the TloePacket (a user-defined bundle)
-    val tloePacket = Wire(new TloePacket)
-
-    // 이더넷 헤더 필드 설정 - 별도 객체의 메서드 사용
-    OXFabricEther.populateHeader(tloePacket.ethHeader)
-
-    // Populate the OmniXtend header fields
-    tloePacket.tloeHeader.vc := 0.U // Virtual Channel ID
-    // tloePacket.omniHeader.msgType   := Mux(chan === 2.U, 2.U, 0.U)     // Message Type 2 (Open Connection)
-    tloePacket.tloeHeader.msgType := Mux(
-      chan === 1.U,
-      2.U,
-      0.U
-    ) // Message Type 2 (Open Connection)
-    tloePacket.tloeHeader.res1 := 0.U // Reserved field 1
-    tloePacket.tloeHeader.seqNum := seq // Sequence Number (0)
-    tloePacket.tloeHeader.seqNumAck := "h3FFFFF".U // Acknowledged Sequence Number (2^22-1)
-    tloePacket.tloeHeader.ack := 0.U // Acknowledgment flag
-    tloePacket.tloeHeader.res2 := 0.U // Reserved field 2
-    tloePacket.tloeHeader.chan := chan // Channel ID
-    tloePacket.tloeHeader.credit := credit // Credit field
-
-    // Populate the high part of the TileLink message fields
-    tloePacket.tlMsgHigh.res1 := 0.U // Reserved field 1
-    tloePacket.tlMsgHigh.chan := 0.U // Channel ID
-    tloePacket.tlMsgHigh.opcode := 0.U // TileLink operation code (input parameter)
-    tloePacket.tlMsgHigh.res2 := 0.U // Reserved field 2
-    tloePacket.tlMsgHigh.param := 0.U // TileLink parameter field
-    tloePacket.tlMsgHigh.size := 0.U // Size of the transaction
-    tloePacket.tlMsgHigh.domain := 0.U // Domain field
-    tloePacket.tlMsgHigh.err := 0.U // Error field
-    tloePacket.tlMsgHigh.res3 := 0.U // Reserved field 3
-    tloePacket.tlMsgHigh.source := 0.U // Source field
-
-    // Populate the low part of the TileLink message fields
-    tloePacket.tlMsgLow.addr := 0.U // TileLink address (input parameter)
-
-    // Convert the TLoE packet bundle to a single UInt representing the entire packet
-    val packetWithPadding = Cat(tloePacket.asUInt, 0.U(272.W))
-
-    packetWithPadding
-  }
-
   /** Creates a normal acknowledgment (ACK) packet.
     *
     * @param seq
@@ -91,344 +23,112 @@ object OXPacket {
     */
   def normalAck(seq: UInt, seq_ack: UInt, ack: UInt, chan: UInt, credit: UInt): UInt = {
     // Create a new instance of the TloePacket (a user-defined bundle)
-    val tloePacket = Wire(new TloePacket)
-
-    // 이더넷 헤더 필드 설정
-    OXFabricEther.populateHeader(tloePacket.ethHeader)
+    val tloeFrame = Wire(new tloeFrame)
 
     // Populate the OmniXtend header fields
-    tloePacket.tloeHeader.vc := 0.U // Virtual Channel ID
-    tloePacket.tloeHeader.msgType := 0.U // Message Type 0 (Normal)
-    tloePacket.tloeHeader.res1 := 0.U // Reserved field 1
-    tloePacket.tloeHeader.seqNum := seq // Sequence Number (0)
-    tloePacket.tloeHeader.seqNumAck := seq_ack // Acknowledged Sequence Number (2^22-1)
-    tloePacket.tloeHeader.ack := ack // Acknowledgment flag
-    tloePacket.tloeHeader.res2 := 0.U // Reserved field 2
-    tloePacket.tloeHeader.chan := chan // Channel ID
-    tloePacket.tloeHeader.credit := credit // Credit field
+    tloeFrame.tloeHeader.vc := 0.U // Virtual Channel ID
+    tloeFrame.tloeHeader.msgType := 0.U // Message Type 0 (Normal)
+    tloeFrame.tloeHeader.res1 := 0.U // Reserved field 1
+    tloeFrame.tloeHeader.seqNum := seq // Sequence Number (0)
+    tloeFrame.tloeHeader.seqNumAck := seq_ack // Acknowledged Sequence Number (2^22-1)
+    tloeFrame.tloeHeader.ack := ack // Acknowledgment flag
+    tloeFrame.tloeHeader.res2 := 0.U // Reserved field 2
+    tloeFrame.tloeHeader.chan := chan // Channel ID
+    tloeFrame.tloeHeader.credit := credit // Credit field
 
     // Populate the high part of the TileLink message fields
-    tloePacket.tlMsgHigh.res1 := 0.U // Reserved field 1
-    tloePacket.tlMsgHigh.chan := 0.U // Channel ID
-    tloePacket.tlMsgHigh.opcode := 0.U // TileLink operation code (input parameter)
-    tloePacket.tlMsgHigh.res2 := 0.U // Reserved field 2
-    tloePacket.tlMsgHigh.param := 0.U // TileLink parameter field
-    tloePacket.tlMsgHigh.size := 0.U // Size of the transaction
-    tloePacket.tlMsgHigh.domain := 0.U // Domain field
-    tloePacket.tlMsgHigh.err := 0.U // Error field
-    tloePacket.tlMsgHigh.res3 := 0.U // Reserved field 3
-    tloePacket.tlMsgHigh.source := 0.U // Source field
+    tloeFrame.tlMsgHigh.res1 := 0.U // Reserved field 1
+    tloeFrame.tlMsgHigh.chan := 0.U // Channel ID
+    tloeFrame.tlMsgHigh.opcode := 0.U // TileLink operation code (input parameter)
+    tloeFrame.tlMsgHigh.res2 := 0.U // Reserved field 2
+    tloeFrame.tlMsgHigh.param := 0.U // TileLink parameter field
+    tloeFrame.tlMsgHigh.size := 0.U // Size of the transaction
+    tloeFrame.tlMsgHigh.domain := 0.U // Domain field
+    tloeFrame.tlMsgHigh.err := 0.U // Error field
+    tloeFrame.tlMsgHigh.res3 := 0.U // Reserved field 3
+    tloeFrame.tlMsgHigh.source := 0.U // Source field
 
     // Populate the low part of the TileLink message fields
-    tloePacket.tlMsgLow.addr := 0.U // TileLink address (input parameter)
+    tloeFrame.tlMsgLow.addr := 0.U // TileLink address (input parameter)
 
     // Convert the TLoE packet bundle to a single UInt representing the entire packet
-    val packetWithPadding = Cat(tloePacket.asUInt, 0.U(272.W))
+    //val packetWithPadding = Cat(tloePacket.asUInt, 0.U(272.W))
+    val packetWithPadding = Cat(tloeFrame.asUInt, 0.U((TLOE_FRAME_SIZE - tloeFrame.asUInt.getWidth).W))
 
     packetWithPadding
   }
 
-  def normalAck_896(seq: UInt, seq_ack: UInt, ack: UInt, chan: UInt, credit: UInt): UInt = {
+  def ackonly(seq: UInt, seq_ack: UInt, ack: UInt, chan: UInt, credit: UInt): UInt = {
     // Create a new instance of the TloePacket (a user-defined bundle)
-    val tloePacket = Wire(new TloePacket)
-
-    // 이더넷 헤더 필드 설정
-    OXFabricEther.populateHeader(tloePacket.ethHeader)
+    val tloeFrame = Wire(new tloeFrame)
 
     // Populate the OmniXtend header fields
-    tloePacket.tloeHeader.vc := 0.U // Virtual Channel ID
-    tloePacket.tloeHeader.msgType := 0.U // Message Type 0 (Normal)
-    tloePacket.tloeHeader.res1 := 0.U // Reserved field 1
-    tloePacket.tloeHeader.seqNum := seq // Sequence Number (0)
-    tloePacket.tloeHeader.seqNumAck := seq_ack // Acknowledged Sequence Number (2^22-1)
-    tloePacket.tloeHeader.ack := ack // Acknowledgment flag
-    tloePacket.tloeHeader.res2 := 0.U // Reserved field 2
-    tloePacket.tloeHeader.chan := chan // Channel ID
-    tloePacket.tloeHeader.credit := credit // Credit field
+    tloeFrame.tloeHeader.vc := 0.U // Virtual Channel ID
+    tloeFrame.tloeHeader.msgType := 1.U // Message Type 1 (Ack Only)
+    tloeFrame.tloeHeader.res1 := 0.U // Reserved field 1
+    tloeFrame.tloeHeader.seqNum := seq // Sequence Number (0)
+    tloeFrame.tloeHeader.seqNumAck := seq_ack // Acknowledged Sequence Number (2^22-1)
+    tloeFrame.tloeHeader.ack := ack // Acknowledgment flag
+    tloeFrame.tloeHeader.res2 := 0.U // Reserved field 2
+    tloeFrame.tloeHeader.chan := chan // Channel ID
+    tloeFrame.tloeHeader.credit := credit // Credit field
 
     // Populate the high part of the TileLink message fields
-    tloePacket.tlMsgHigh.res1 := 0.U // Reserved field 1
-    tloePacket.tlMsgHigh.chan := 0.U // Channel ID
-    tloePacket.tlMsgHigh.opcode := 0.U // TileLink operation code (input parameter)
-    tloePacket.tlMsgHigh.res2 := 0.U // Reserved field 2
-    tloePacket.tlMsgHigh.param := 0.U // TileLink parameter field
-    tloePacket.tlMsgHigh.size := 0.U // Size of the transaction
-    tloePacket.tlMsgHigh.domain := 0.U // Domain field
-    tloePacket.tlMsgHigh.err := 0.U // Error field
-    tloePacket.tlMsgHigh.res3 := 0.U // Reserved field 3
-    tloePacket.tlMsgHigh.source := 0.U // Source field
+    tloeFrame.tlMsgHigh.res1 := 0.U // Reserved field 1
+    tloeFrame.tlMsgHigh.chan := 0.U // Channel ID
+    tloeFrame.tlMsgHigh.opcode := 0.U // TileLink operation code (input parameter)
+    tloeFrame.tlMsgHigh.res2 := 0.U // Reserved field 2
+    tloeFrame.tlMsgHigh.param := 0.U // TileLink parameter field
+    tloeFrame.tlMsgHigh.size := 0.U // Size of the transaction
+    tloeFrame.tlMsgHigh.domain := 0.U // Domain field
+    tloeFrame.tlMsgHigh.err := 0.U // Error field
+    tloeFrame.tlMsgHigh.res3 := 0.U // Reserved field 3
+    tloeFrame.tlMsgHigh.source := 0.U // Source field
 
     // Populate the low part of the TileLink message fields
-    tloePacket.tlMsgLow.addr := 0.U // TileLink address (input parameter)
+    tloeFrame.tlMsgLow.addr := 0.U // TileLink address (input parameter)
 
     // Convert the TLoE packet bundle to a single UInt representing the entire packet
-    val packetWithPadding = Cat(tloePacket.asUInt, 0.U(592.W))
+    //val packetWithPadding = Cat(tloePacket.asUInt, 0.U(272.W))
+    val packetWithPadding = Cat(tloeFrame.asUInt, 0.U((TLOE_FRAME_SIZE - tloeFrame.asUInt.getWidth).W))
 
     packetWithPadding
   }
 
-  def ackonly(
-      seq: UInt,
-      seq_ack: UInt,
-      ack: UInt,
-      chan: UInt,
-      credit: UInt
-  ): UInt = {
+  def initFrame(txChan: UInt, txAddr: UInt, txOpcode: UInt, txData: UInt, seqNum: UInt, seqNumAck: UInt, ackType: UInt, char: UInt, credit: UInt, size: UInt, param: UInt, source: UInt): UInt = {
     // Create a new instance of the TloePacket (a user-defined bundle)
-    val tloePacket = Wire(new TloePacket)
-
-    // 이더넷 헤더 필드 설정
-    OXFabricEther.populateHeader(tloePacket.ethHeader)
-
-    // Populate the OmniXtend header fields
-    tloePacket.tloeHeader.vc := 0.U // Virtual Channel ID
-    tloePacket.tloeHeader.msgType := 1.U // Message Type 1 (Ack Only)
-    tloePacket.tloeHeader.res1 := 0.U // Reserved field 1
-    tloePacket.tloeHeader.seqNum := seq // Sequence Number (0)
-    tloePacket.tloeHeader.seqNumAck := seq_ack // Acknowledged Sequence Number (2^22-1)
-    tloePacket.tloeHeader.ack := ack // Acknowledgment flag
-    tloePacket.tloeHeader.res2 := 0.U // Reserved field 2
-    tloePacket.tloeHeader.chan := chan // Channel ID
-    tloePacket.tloeHeader.credit := credit // Credit field
-
-    // Populate the high part of the TileLink message fields
-    tloePacket.tlMsgHigh.res1 := 0.U // Reserved field 1
-    tloePacket.tlMsgHigh.chan := 0.U // Channel ID
-    tloePacket.tlMsgHigh.opcode := 0.U // TileLink operation code (input parameter)
-    tloePacket.tlMsgHigh.res2 := 0.U // Reserved field 2
-    tloePacket.tlMsgHigh.param := 0.U // TileLink parameter field
-    tloePacket.tlMsgHigh.size := 0.U // Size of the transaction
-    tloePacket.tlMsgHigh.domain := 0.U // Domain field
-    tloePacket.tlMsgHigh.err := 0.U // Error field
-    tloePacket.tlMsgHigh.res3 := 0.U // Reserved field 3
-    tloePacket.tlMsgHigh.source := 0.U // Source field
-
-    // Populate the low part of the TileLink message fields
-    tloePacket.tlMsgLow.addr := 0.U // TileLink address (input parameter)
-
-    // Convert the TLoE packet bundle to a single UInt representing the entire packet
-    val packetWithPadding = Cat(tloePacket.asUInt, 0.U(272.W))
-
-    packetWithPadding
-  }
-
-  /** Creates a packet to close an OmniXtend connection.
-    *
-    * @param seq
-    *   Sequence number for the packet.
-    * @return
-    *   A UInt representing the full packet with padding.
-    */
-  def closeConnection(seq: UInt): UInt = {
-    // Create a new instance of the TloePacket (a user-defined bundle)
-    val tloePacket = Wire(new TloePacket)
-
-    // 이더넷 헤더 필드 설정
-    OXFabricEther.populateHeader(tloePacket.ethHeader)
-
-    // Populate the OmniXtend header fields
-    tloePacket.tloeHeader.vc := 0.U // Virtual Channel ID
-    tloePacket.tloeHeader.msgType := 3.U // Message Type 3 (Close Connection)
-    tloePacket.tloeHeader.res1 := 0.U // Reserved field 1
-    tloePacket.tloeHeader.seqNum := seq // Sequence Number (0)
-    tloePacket.tloeHeader.seqNumAck := 0.U // Acknowledged Sequence Number (2^22-1)
-    tloePacket.tloeHeader.ack := 1.U // Acknowledgment flag
-    tloePacket.tloeHeader.res2 := 0.U // Reserved field 2
-    tloePacket.tloeHeader.credit := 0.U // Credit field
-    tloePacket.tloeHeader.chan := 0.U // Channel ID
-
-    // Populate the high part of the TileLink message fields
-    tloePacket.tlMsgHigh.res1 := 0.U // Reserved field 1
-    tloePacket.tlMsgHigh.chan := 0.U // Channel ID
-    tloePacket.tlMsgHigh.opcode := 0.U // TileLink operation code (input parameter)
-    tloePacket.tlMsgHigh.res2 := 0.U // Reserved field 2
-    tloePacket.tlMsgHigh.param := 0.U // TileLink parameter field
-    tloePacket.tlMsgHigh.size := 0.U // Size of the transaction
-    tloePacket.tlMsgHigh.domain := 0.U // Domain field
-    tloePacket.tlMsgHigh.err := 0.U // Error field
-    tloePacket.tlMsgHigh.res3 := 0.U // Reserved field 3
-    tloePacket.tlMsgHigh.source := 0.U // Source field
-
-    // Populate the low part of the TileLink message fields
-    tloePacket.tlMsgLow.addr := 0.U // TileLink address (input parameter)
-
-    // Convert the TLoE packet bundle to a single UInt representing the entire packet
-    val packetWithPadding = Cat(tloePacket.asUInt, 0.U(272.W))
-
-    packetWithPadding
-  }
-
-  /** Creates a packet for a TileLink read operation.
-    *
-    * @param txAddr
-    *   TileLink address.
-    * @param seqNum
-    *   Sequence number.
-    * @param seqNumAck
-    *   Acknowledged sequence number.
-    * @param size
-    *   Transaction size.
-    * @return
-    *   A UInt representing the full packet with padding.
-    */
-  def readPacket(txAddr: UInt, seqNum: UInt, seqNumAck: UInt, size: UInt): UInt = {
-    // Create a new instance of the TloePacket (a user-defined bundle)
-    val tloePacket = Wire(new TloePacket)
-
-    // 이더넷 헤더 필드 설정
-    OXFabricEther.populateHeader(tloePacket.ethHeader)
-
-    // Populate the OmniXtend header fields
-    tloePacket.tloeHeader.vc := 0.U // Virtual Channel ID
-    tloePacket.tloeHeader.msgType := 0.U // Message Type 0 (Normal)
-    tloePacket.tloeHeader.res1 := 0.U // Reserved field 1
-    tloePacket.tloeHeader.seqNum := seqNum // Sequence Number
-    tloePacket.tloeHeader.seqNumAck := seqNumAck // Acknowledged Sequence Number
-    tloePacket.tloeHeader.ack := 1.U // Acknowledgment flag
-    tloePacket.tloeHeader.res2 := 0.U // Reserved field 2
-    tloePacket.tloeHeader.chan := 0.U // Channel ID
-    tloePacket.tloeHeader.credit := 0.U // Credit field
-
-    // Populate the high part of the TileLink message fields
-    tloePacket.tlMsgHigh.res1 := 0.U // Reserved field 1
-    tloePacket.tlMsgHigh.chan := 1.U // Channel ID
-    tloePacket.tlMsgHigh.opcode := 4.U // TileLink operation code (input parameter)
-    tloePacket.tlMsgHigh.res2 := 0.U // Reserved field 2
-    tloePacket.tlMsgHigh.param := 0.U // TileLink parameter field
-    tloePacket.tlMsgHigh.size := size // Size of the transaction
-    tloePacket.tlMsgHigh.domain := 0.U // Domain field
-    tloePacket.tlMsgHigh.err := 0.U // Error field
-    tloePacket.tlMsgHigh.res3 := 0.U // Reserved field 3
-    tloePacket.tlMsgHigh.source := 0.U // Source field
-
-    // Populate the low part of the TileLink message fields
-    tloePacket.tlMsgLow.addr := txAddr // TileLink address (input parameter)
-    // tloePacket.tlMsgLow.addr        := "h0000000100000000".U(64.W)
-
-    // Define Padding and Mask
-    val padding = 0.U(192.W) // 192-bit padding
-    val mask = "h0000000000000001".U(64.W) // 64-bit mask, all bits set to 1
-
-    // Convert the TLoE packet bundle to a single UInt representing the entire packet
-    val packetWithPadding = Cat(tloePacket.asUInt, padding, mask, 0.U(16.W))
-
-    packetWithPadding
-  }
-
-  /** Creates a packet for a TileLink write operation.
-    *
-    * @param txAddr
-    *   TileLink address.
-    * @param txData
-    *   Data to write.
-    * @param seqNum
-    *   Sequence number.
-    * @param seqNumAck
-    *   Acknowledged sequence number.
-    * @param size
-    *   Transaction size.
-    * @return
-    *   A UInt representing the full packet with padding.
-    */
-  def writePacket(txAddr: UInt, txData: UInt, seqNum: UInt, seqNumAck: UInt, size: UInt): UInt = {
-    // Create a new instance of the TloePacket (a user-defined bundle)
-    val tloePacket = Wire(new TloePacket)
-
-    // 이더넷 헤더 필드 설정
-    OXFabricEther.populateHeader(tloePacket.ethHeader)
-
-    // Populate the OmniXtend header fields
-    tloePacket.tloeHeader.vc := 0.U // Virtual Channel ID
-    tloePacket.tloeHeader.msgType := 0.U // Message Type 0 (Normal)
-    tloePacket.tloeHeader.res1 := 0.U // Reserved field 1
-    tloePacket.tloeHeader.seqNum := seqNum // Sequence Number
-    tloePacket.tloeHeader.seqNumAck := seqNumAck // Acknowledged Sequence Number
-    tloePacket.tloeHeader.ack := 1.U // Acknowledgment flag
-    tloePacket.tloeHeader.res2 := 0.U // Reserved field 2
-    tloePacket.tloeHeader.chan := 0.U // Channel ID
-    tloePacket.tloeHeader.credit := 0.U // Credit field
-
-    // Populate the high part of the TileLink message fields
-    tloePacket.tlMsgHigh.res1 := 0.U // Reserved field 1
-    tloePacket.tlMsgHigh.chan := 1.U // Channel ID
-    tloePacket.tlMsgHigh.opcode := 0.U // TileLink operation code (input parameter)
-    tloePacket.tlMsgHigh.res2 := 0.U // Reserved field 2
-    tloePacket.tlMsgHigh.param := 0.U // TileLink parameter field
-    tloePacket.tlMsgHigh.size := size // Size of the transaction
-    tloePacket.tlMsgHigh.domain := 0.U // Domain field
-    tloePacket.tlMsgHigh.err := 0.U // Error field
-    tloePacket.tlMsgHigh.res3 := 0.U // Reserved field 3
-    tloePacket.tlMsgHigh.source := 0.U // Source field
-
-    // Populate the low part of the TileLink message fields
-    tloePacket.tlMsgLow.addr := txAddr // TileLink address (input parameter)
-
-    // Define Padding and Mask
-    val mask = "h0000000000000001".U(64.W) // 64-bit mask, all bits set to 1
-
-    // packetWithPadding 정의
-    val packetWithPadding = Wire(UInt(576.W))  // 72바이트 = 576비트
-    switch(size) {
-      is(1.U) {  // 2 Bytes
-        packetWithPadding := Cat(0.U(256.W), tloePacket.asUInt, txData(15, 0), 0.U(240.W), mask, 0.U(16.W))
-      }
-      is(2.U) {  // 4 Bytes
-        packetWithPadding := Cat(0.U(256.W), tloePacket.asUInt, txData(31, 0), 0.U(224.W), mask, 0.U(16.W))
-      }
-      is(3.U) {  // 8 Bytes
-        packetWithPadding := Cat(0.U(256.W), tloePacket.asUInt, txData(63, 0), 0.U(192.W), mask, 0.U(16.W))
-      }
-      is(4.U) {  // 16 Bytes
-        packetWithPadding := Cat(0.U(256.W), tloePacket.asUInt, txData(127, 0), 0.U(128.W), mask, 0.U(16.W))
-      }
-      is(5.U) {  // 32 Bytes
-        packetWithPadding := Cat(0.U(256.W), tloePacket.asUInt, txData(255, 0), 0.U(0.W), mask, 0.U(16.W))
-      }
-      is(6.U) {  // 64 Bytes
-        packetWithPadding := Cat(0.U(256.W), tloePacket.asUInt, txData(511, 0), mask, 0.U(16.W))
-      }
-    }
-
-    packetWithPadding
-  }
-
-  def initFrame(txAddr: UInt, txOpcode: UInt, txData: UInt, seqNum: UInt, seqNumAck: UInt, ackType: UInt, char: UInt, credit: UInt, size: UInt, param: UInt, source: UInt): UInt = {
-    // Create a new instance of the TloePacket (a user-defined bundle)
-    val tloePacket = Wire(new TloePacket)
+    val tloeFrame = Wire(new tloeFrame)
     
     // packetWithPadding 초기화 수정
-    val packetWithPadding = WireInit(0.U(896.W))
-
-    // 이더넷 헤더 필드 설정
-    OXFabricEther.populateHeader(tloePacket.ethHeader)
+    val packetWithPadding = WireInit(0.U(TLOE_FRAME_SIZE.W))
 
     // Populate the OmniXtend header fields
-    tloePacket.tloeHeader.vc := 0.U // Virtual Channel ID
-    tloePacket.tloeHeader.msgType := 0.U // Message Type 0 (Normal)
-    tloePacket.tloeHeader.res1 := 0.U // Reserved field 1
-    tloePacket.tloeHeader.seqNum := seqNum // Sequence Number
-    tloePacket.tloeHeader.seqNumAck := seqNumAck // Acknowledged Sequence Number
-    tloePacket.tloeHeader.ack := ackType // Acknowledgment flag
-    tloePacket.tloeHeader.res2 := 0.U // Reserved field 2
-    tloePacket.tloeHeader.chan := char // Channel ID
-    tloePacket.tloeHeader.credit := credit // Credit field
+    tloeFrame.tloeHeader.vc := 0.U // Virtual Channel ID
+    tloeFrame.tloeHeader.msgType := 0.U // Message Type 0 (Normal)
+    tloeFrame.tloeHeader.res1 := 0.U // Reserved field 1
+    tloeFrame.tloeHeader.seqNum := seqNum // Sequence Number
+    tloeFrame.tloeHeader.seqNumAck := seqNumAck // Acknowledged Sequence Number
+    tloeFrame.tloeHeader.ack := ackType // Acknowledgment flag
+    tloeFrame.tloeHeader.res2 := 0.U // Reserved field 2
+    tloeFrame.tloeHeader.chan := char // Channel ID
+    tloeFrame.tloeHeader.credit := credit // Credit field
 
     // txOpcode 비교 수정
-    when(txOpcode === 0.U) {
+    when(txChan === CHANNEL_A && txOpcode === A_PUTFULLDATA_OPCODE) {
       // Populate the high part of the TileLink message fields
-      tloePacket.tlMsgHigh.res1 := 0.U // Reserved field 1
-      tloePacket.tlMsgHigh.chan := 1.U // Channel ID (A)
-      tloePacket.tlMsgHigh.opcode := txOpcode // TileLink operation code (input parameter)
-      tloePacket.tlMsgHigh.res2 := 0.U // Reserved field 2
-      tloePacket.tlMsgHigh.param := param // TileLink parameter field
-      tloePacket.tlMsgHigh.size := size // Size of the transaction
-      tloePacket.tlMsgHigh.domain := 0.U // Domain field
-      tloePacket.tlMsgHigh.err := 0.U // Error field
-      tloePacket.tlMsgHigh.res3 := 0.U // Reserved field 3
-      tloePacket.tlMsgHigh.source := source // Source field
+      tloeFrame.tlMsgHigh.res1 := 0.U // Reserved field 1
+      tloeFrame.tlMsgHigh.chan := txChan // Channel ID (A)
+      tloeFrame.tlMsgHigh.opcode := txOpcode // TileLink operation code (input parameter)
+      tloeFrame.tlMsgHigh.res2 := 0.U // Reserved field 2
+      tloeFrame.tlMsgHigh.param := param // TileLink parameter field
+      tloeFrame.tlMsgHigh.size := size // Size of the transaction
+      tloeFrame.tlMsgHigh.domain := 0.U // Domain field
+      tloeFrame.tlMsgHigh.err := 0.U // Error field
+      tloeFrame.tlMsgHigh.res3 := 0.U // Reserved field 3
+      tloeFrame.tlMsgHigh.source := source // Source field
 
       // Populate the low part of the TileLink message fields
-      tloePacket.tlMsgLow.addr := txAddr
+      tloeFrame.tlMsgLow.addr := txAddr
       //tloePacket.tlMsgLow.addr := txData(63, 0)
       //tloePacket.tlMsgLow.addr := txData(511, 448)
 
@@ -438,6 +138,7 @@ object OXPacket {
 
       // packetWithPadding 정의
       switch(size) {
+        /*
         is(0.U) {  // 0 Bytes
           packetWithPadding := Cat(tloePacket.asUInt, txData(7, 0), 0.U(56.W), 0.U(128.W), mask, 0.U(16.W), 0.U(320.W));
         }
@@ -453,6 +154,14 @@ object OXPacket {
         is(4.U) {  // 16 Bytes
           packetWithPadding := Cat(tloePacket.asUInt, txData(127, 0), 0.U(64.W), mask, 0.U(16.W), 0.U(320.W));
         }
+        */
+        is(5.U) {  // 32 Bytes
+          packetWithPadding := Cat(tloeFrame.asUInt, txData(255, 0), mask, 0.U(256.W), 0.U(3456.W))
+        }
+        is(6.U) {  // 64 Bytes
+          packetWithPadding := Cat(tloeFrame.asUInt, txData(511, 0), mask, 0.U(3456.W))
+        }
+        /*
         is(5.U) {  // 32 Bytes
           packetWithPadding := Cat(tloePacket.asUInt, txData(255, 0), mask, 0.U(16.W), 0.U(256.W));
         }
@@ -460,46 +169,101 @@ object OXPacket {
           packetWithPadding := Cat(tloePacket.asUInt, txData(511, 0), mask, 0.U(16.W))
           //packetWithPadding := Cat(tloePacket.asUInt, txData(447, 0), mask, 0.U(64.W), 0.U(16.W))
         }
+        */
       }
-    }.elsewhen(txOpcode === 4.U) {
-      tloePacket.tlMsgHigh.res1 := 0.U // Reserved field 1
-      tloePacket.tlMsgHigh.chan := 1.U // Channel ID (A)
-      tloePacket.tlMsgHigh.opcode := txOpcode // TileLink operation code (input parameter)
-      tloePacket.tlMsgHigh.res2 := 0.U // Reserved field 2
-      tloePacket.tlMsgHigh.param := param // TileLink parameter field
-      tloePacket.tlMsgHigh.size := size // Size of the transaction
-      tloePacket.tlMsgHigh.domain := 0.U // Domain field
-      tloePacket.tlMsgHigh.err := 0.U // Error field
-      tloePacket.tlMsgHigh.res3 := 0.U // Reserved field 3
-      tloePacket.tlMsgHigh.source := source // Source field
+    }.elsewhen(txChan === CHANNEL_A && txOpcode === A_GET_OPCODE) {
+      tloeFrame.tlMsgHigh.res1 := 0.U // Reserved field 1
+      tloeFrame.tlMsgHigh.chan := txChan // Channel ID (A)
+      tloeFrame.tlMsgHigh.opcode := txOpcode // TileLink operation code (input parameter)
+      tloeFrame.tlMsgHigh.res2 := 0.U // Reserved field 2
+      tloeFrame.tlMsgHigh.param := param // TileLink parameter field
+      tloeFrame.tlMsgHigh.size := size // Size of the transaction
+      tloeFrame.tlMsgHigh.domain := 0.U // Domain field
+      tloeFrame.tlMsgHigh.err := 0.U // Error field
+      tloeFrame.tlMsgHigh.res3 := 0.U // Reserved field 3
+      tloeFrame.tlMsgHigh.source := source // Source field
 
       // Populate the low part of the TileLink message fields
-      tloePacket.tlMsgLow.addr := txAddr // TileLink address (input parameter)
+      tloeFrame.tlMsgLow.addr := txAddr // TileLink address (input parameter)
 
       // Define Padding and Mask
       val mask = "h0000000000000001".U(64.W) // 64-bit mask, all bits set to 1
 
-      packetWithPadding := Cat(tloePacket.asUInt, 0.U(192.W), mask, 0.U(16.W), 0.U(320.W))
-    }.otherwise {
-      tloePacket.tlMsgHigh.res1 := 0.U // Reserved field 1
-      tloePacket.tlMsgHigh.chan := 0.U // Channel ID (A)
-      tloePacket.tlMsgHigh.opcode := 0.U // TileLink operation code (input parameter)
-      tloePacket.tlMsgHigh.res2 := 0.U // Reserved field 2
-      tloePacket.tlMsgHigh.param := 0.U // TileLink parameter field
-      tloePacket.tlMsgHigh.size := 0.U // Size of the transaction
-      tloePacket.tlMsgHigh.domain := 0.U // Domain field
-      tloePacket.tlMsgHigh.err := 0.U // Error field
-      tloePacket.tlMsgHigh.res3 := 0.U // Reserved field 3
-      tloePacket.tlMsgHigh.source := 0.U // Source field
+      packetWithPadding := Cat(tloeFrame.asUInt, 0.U(128.W), mask, 0.U(3840.W))
+
+    }.elsewhen(txChan === CHANNEL_D && txOpcode === D_ACCESSACK_OPCODE) {  // AccessAck
+      tloeFrame.tlMsgHigh.res1 := 0.U // Reserved field 1
+      tloeFrame.tlMsgHigh.chan := txChan // Channel ID (A)
+      tloeFrame.tlMsgHigh.opcode := txOpcode // TileLink operation code (input parameter)
+      tloeFrame.tlMsgHigh.res2 := 0.U // Reserved field 2
+      tloeFrame.tlMsgHigh.param := param // TileLink parameter field
+      tloeFrame.tlMsgHigh.size := size // Size of the transaction
+      tloeFrame.tlMsgHigh.domain := 0.U // Domain field
+      tloeFrame.tlMsgHigh.err := 0.U // Error field
+      tloeFrame.tlMsgHigh.res3 := 0.U // Reserved field 3
+      tloeFrame.tlMsgHigh.source := source // Source field
 
       // Populate the low part of the TileLink message fields
-      tloePacket.tlMsgLow.addr := 0.U // TileLink address (input parameter)
+      tloeFrame.tlMsgLow.addr := 0.U // TileLink address (input parameter)
+
+      // Define Padding and Mask
+      val mask = "h0000000000000001".U(64.W) // 64-bit mask, all bits set to 1
+
+      packetWithPadding := Cat(tloeFrame.asUInt, 0.U(128.W), mask, 0.U(3840.W))
+
+    }.elsewhen(txChan === CHANNEL_D && txOpcode === D_ACCESSACKDATA_OPCODE) {  // AccessAckData
+      tloeFrame.tlMsgHigh.res1 := 0.U // Reserved field 1
+      tloeFrame.tlMsgHigh.chan := txChan // Channel ID (A)
+      tloeFrame.tlMsgHigh.opcode := txOpcode // TileLink operation code (input parameter)
+      tloeFrame.tlMsgHigh.res2 := 0.U // Reserved field 2
+      tloeFrame.tlMsgHigh.param := param // TileLink parameter field
+      tloeFrame.tlMsgHigh.size := size // Size of the transaction
+      tloeFrame.tlMsgHigh.domain := 0.U // Domain field
+      tloeFrame.tlMsgHigh.err := 0.U // Error field
+      tloeFrame.tlMsgHigh.res3 := 0.U // Reserved field 3
+      tloeFrame.tlMsgHigh.source := source // Source field
+
+      // Populate the low part of the TileLink message fields
+      tloeFrame.tlMsgLow.addr := 0.U // Not used
+
+      // Define Padding and Mask
+      val mask = "h0000000000000001".U(64.W) // 64-bit mask, all bits set to 1
+
+      // TODO Data
+      switch(size) {
+        is(6.U) {  // 64 Bytes
+          // tloePacket의 하위 64비트를 제거하고, 그 부분부터 txData와 mask를 연결
+          packetWithPadding := Cat(tloeFrame.asUInt(191, 64), txData(511, 0), mask, 0.U(64.W), 0.U(3456.W))
+        }
+      }
+ 
+ /*
+      //TODO
+      packetWithPadding := Cat(tloePacket.asUInt(303, 64), txData, mask, 0.U(3520.W), 0.U(16.W))
+*/
+    }.otherwise {
+      tloeFrame.tlMsgHigh.res1 := 0.U // Reserved field 1
+      tloeFrame.tlMsgHigh.chan := 0.U // Channel ID (A)
+      tloeFrame.tlMsgHigh.opcode := 0.U // TileLink operation code (input parameter)
+      tloeFrame.tlMsgHigh.res2 := 0.U // Reserved field 2
+      tloeFrame.tlMsgHigh.param := 0.U // TileLink parameter field
+      tloeFrame.tlMsgHigh.size := 0.U // Size of the transaction
+      tloeFrame.tlMsgHigh.domain := 0.U // Domain field
+      tloeFrame.tlMsgHigh.err := 0.U // Error field
+      tloeFrame.tlMsgHigh.res3 := 0.U // Reserved field 3
+      tloeFrame.tlMsgHigh.source := 0.U // Source field
+
+      // Populate the low part of the TileLink message fields
+      tloeFrame.tlMsgLow.addr := 0.U // TileLink address (input parameter)
 
       // Define Padding and Mask
       val mask = "h0000000000000000".U(64.W) // 64-bit mask, all bits set to 1
 
-      packetWithPadding := Cat(tloePacket.asUInt, 0.U(592.W))
+      packetWithPadding := Cat(tloeFrame.asUInt, 0.U(592.W))
     }
     packetWithPadding
   }
+  //////////////////////////////////////////////////////////////
+  // DEBUG
+  //////////////////////////////////////////////////////////////
 }

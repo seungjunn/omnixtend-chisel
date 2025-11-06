@@ -2,9 +2,9 @@ package omnixtend
 
 import chisel3._
 import chisel3.util._
-import freechips.rocketchip.tilelink._
 
 import OmniXtendConstants._
+import TloePacGen._
 
-class TLOEReceiver extends Module {
+class Retransmission extends Module {
 } 

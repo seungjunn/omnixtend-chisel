@@ -3,23 +3,27 @@ package omnixtend
 import chisel3._
 import chisel3.util._
 
+import OmniXtendConstants._
+import TloePacGen._
+
 class TLOETransmitter extends Module {
   val io = IO(new Bundle {
     // TileLink Interface
-    val txOpcode = Input(UInt(3.W))
-    val txParam = Input(UInt(4.W))
-    val txSize = Input(UInt(4.W))
-    val txSource = Input(UInt(26.W))
-    val txAddr = Input(UInt(64.W))
-    val txData = Input(UInt(512.W))
-    val txMask = Input(UInt(64.W))
-    val txValid = Input(Bool())
+    val tlChan = Input(UInt(3.W))
+    val tlOpcode = Input(UInt(3.W))
+    val tlParam = Input(UInt(4.W))
+    val tlSize = Input(UInt(4.W))
+    val tlSource = Input(UInt(26.W))
+    val tlAddr = Input(UInt(64.W))
+    val tlData = Input(UInt(512.W))
+    val tlMask = Input(UInt(64.W))
+    val tlValid = Input(Bool())
 
-    // Ethernet Interface
-    val txdata = Output(UInt(64.W))
-    val txvalid = Output(Bool())
-    val txlast = Output(Bool())
-    val txkeep = Output(UInt(8.W))
+    // TLOEEther Interface (simplified)
+    val txData = Output(UInt(TLOE_FRAME_SIZE.W))
+    val txFlitSize = Output(UInt(7.W))
+    val txStart = Output(Bool())
+    val txReady = Input(Bool())
 
     // Sequence Management
     val incTxSeq = Output(Bool())
@@ -32,7 +36,6 @@ class TLOETransmitter extends Module {
     val ackdSeq = Input(UInt(22.W))
 
     // Flow Control
-    /*
     val decCreditValid = Output(Bool())
     val decCreditChannel = Output(UInt(3.W))
     val decCreditAmount = Output(UInt(16.W))
@@ -42,14 +45,22 @@ class TLOETransmitter extends Module {
     val decAccCreditAmount = Output(UInt(16.W))
 
     val credits = Input(Vec(6, UInt(16.W)))
-    val accCredits = Input(Vec(6, UInt(16.W)))
+    //val accCredits = Input(Vec(6, UInt(16.W)))
     val maxCreditChannel = Input(UInt(3.W))
-    val error = Input(Bool())
+    //val error = Input(Bool())
     val maxCredit = Input(UInt(16.W))
+
+/*
+    // Retransmission
+    val retransmitWrite = Output(new RetransmitBufferElement)
+    val retransmitWriteValid = Output(Bool())
+    val retransmitIsFull = Input(Bool())
+
+    val isRetransmit = Input(Bool())
     */
 
     // Timer
-    //val currTime = Input(UInt(64.W))
+    val currTime = Input(UInt(64.W))
 
     //
     val ackSeqNum = Input(UInt(22.W))
@@ -59,22 +70,22 @@ class TLOETransmitter extends Module {
     val ackAckonlyDone = Output(Bool())
 
     val epConn = Input(Bool())
+    val modeConn = Input(UInt(2.W))  // Connection mode: 1=master, 2=slave
 
     val debug1 = Input(Bool())
     val debug2 = Input(Bool())
   })
 
-  io.txdata := 0.U
-  io.txvalid := false.B
-  io.txlast := false.B
-  io.txkeep := 0.U
+  // Initialize TLOEEther interface
+  io.txData := 0.U
+  io.txStart := false.B
+  io.txFlitSize := 0.U
 
   io.incTxSeq := false.B
   io.incRxSeq := false.B
   io.updateAckSeq := false.B
   io.newAckSeq := 0.U
 
-  /*
   io.decCreditValid := false.B
   io.decCreditChannel := 0.U
   io.decCreditAmount := 0.U
@@ -82,6 +93,13 @@ class TLOETransmitter extends Module {
   io.decAccCreditValid := false.B
   io.decAccCreditChannel := 0.U
   io.decAccCreditAmount := 0.U
+
+/*
+  io.retransmitWrite.tloeFrame := 0.U(TLOE_FRAME_SIZE.W)
+  io.retransmitWrite.tloeFrameSize := 0.U(5.W)
+  io.retransmitWrite.state := 0.U(2.W)
+  io.retransmitWrite.sendTime := 0.U(64.W)
+  io.retransmitWriteValid := false.B
   */
 
   io.ackAckonlyDone := false.B
@@ -90,13 +108,14 @@ class TLOETransmitter extends Module {
   epConn := io.epConn
 
   val txIdle :: txAckOnly :: txCheckFrame :: txCheckAck :: txCheckCredit :: txInitFrame :: txHandleCredit :: txHandleAccCredit :: txPrepareSend :: txSendPacket :: txEnqRetransmit :: txDone :: Nil = Enum(12)
-  val txState = dontTouch(RegInit(txIdle))
+  val txState = RegInit(txIdle)
 
   val aidle :: amakeFrame :: asendRequest :: adone :: Nil = Enum(4)
   val astate = RegInit(aidle)
 
   val tx_size = RegInit(0.U(3.W))
 
+  val nextChan = RegInit(0.U(3.W))
   val nextOpcode = RegInit(0.U(3.W))
   val nextParam = RegInit(0.U(4.W))
   val nextSize = RegInit(0.U(4.W))
@@ -108,22 +127,19 @@ class TLOETransmitter extends Module {
   val isACK = RegInit(false.B)
   val isCredit = RegInit(false.B)
 
-  /*
   val maxAccChannel = RegInit(0.U(3.W))
   val maxAccCredit = RegInit(0.U(16.W))
   maxAccChannel := io.maxCreditChannel
   maxAccCredit := io.maxCredit
-  */
 
   // Register for storing read (rPacket) and write (wPacket) packets
-  val txPacket = RegInit(0.U(896.W))
-  val txPacketSize = RegInit(0.U(5.W))
+  //val txPacket = dontTouch(RegInit(0.U(896.W)))
+  val txFrame = RegInit(0.U(TLOE_FRAME_SIZE.W))
+  val txFrameSize = RegInit(0.U(5.W))
   val txRequiredFlits = RegInit(0.U(8.W))
 
-  val nAckPacket = RegInit(0.U(576.W))
-
-  val txPacketVec = RegInit(VecInit(Seq.fill(14)(0.U(64.W))))
-  val txPacketVecSize = RegInit(0.U(5.W))
+  // TODO delete
+  val nAckPacket = RegInit(0.U(TLOE_FRAME_SIZE.W))
 
   val sendPacket = RegInit(false.B)
   val txComplete = RegInit(true.B)
@@ -135,39 +151,36 @@ class TLOETransmitter extends Module {
   val axi_txlast = RegInit(false.B)
   val axi_txkeep = RegInit(0.U(8.W))  
 
-  // Connect internal signals to external IO interface for AXI transmission
-  io.txvalid := axi_txvalid
-  io.txdata := axi_txdata
-  io.txlast := axi_txlast
-  io.txkeep := axi_txkeep
+  // Prepare data for TLOEEther's internal interface
+  // TLOEEther will handle the conversion to ethernet signals
+  // Note: TLOEEther is instantiated in OX.scala
 
    // Single integrated queue for transmission data
   val txQueue = Module(new Queue(new Bundle {
+    val chan = UInt(3.W)
     val opcode = UInt(3.W)
     val param = UInt(4.W)
     val size = UInt(4.W)
     val source = UInt(26.W)
     val addr = UInt(64.W)
     val data = UInt(512.W)
-  }, 4))
+  }, 16))
 
   // Default queue port values
   txQueue.io.enq.valid := false.B
   txQueue.io.enq.bits := 0.U.asTypeOf(txQueue.io.enq.bits)
   txQueue.io.deq.ready := false.B
 
-  val d_epConn = dontTouch(RegInit(false.B))
-  val d_debug1 = dontTouch(RegInit(false.B))
-  val d_txQueueEnqValid = dontTouch(RegInit(false.B))
-
-  d_epConn := epConn
-  d_debug1 := io.debug1
-  d_txQueueEnqValid := txQueue.io.enq.valid
+  val tx_debug_epConn = RegInit(false.B)
+  val tx_debug_debug1 = RegInit(false.B)
+  tx_debug_epConn := io.epConn
+  tx_debug_debug1 := io.debug1
 
   // Debug
   val testReadAddr = RegInit(0x1000.U(64.W))
-  when(io.debug1) {
+  when(epConn && io.debug1) {
     txQueue.io.enq.bits.addr := testReadAddr
+    txQueue.io.enq.bits.chan := 1.U
     txQueue.io.enq.bits.opcode := 4.U
     txQueue.io.enq.bits.size := 6.U
     txQueue.io.enq.bits.data := 0.U
@@ -186,62 +199,91 @@ class TLOETransmitter extends Module {
     ackSeqNumFlag := io.ackSeqNum
   }
 
-  val d_txValid = dontTouch(RegInit(false.B))
-  d_txValid := io.txValid
-
   // Enqueue data into the queue when txValid is asserted
-  when(io.txValid) {
-    txQueue.io.enq.bits.opcode := io.txOpcode
-    txQueue.io.enq.bits.param := io.txParam
-    txQueue.io.enq.bits.size := io.txSize
-    txQueue.io.enq.bits.source := io.txSource
-    txQueue.io.enq.bits.addr := io.txAddr
-    txQueue.io.enq.bits.data := io.txData
+  // TODO txvalid is always high??
+  when(io.tlValid) {
+    txQueue.io.enq.bits.chan := io.tlChan
+    txQueue.io.enq.bits.opcode := io.tlOpcode
+    txQueue.io.enq.bits.param := io.tlParam
+    txQueue.io.enq.bits.size := io.tlSize
+    txQueue.io.enq.bits.source := io.tlSource
+    txQueue.io.enq.bits.addr := io.tlAddr
+    txQueue.io.enq.bits.data := io.tlData
     txQueue.io.enq.valid := true.B
   }
+
+  val ackAckonly = RegInit(false.B)
+  ackAckonly := io.ackAckonly
   
-  /*
   val creditADecCntDebug = RegInit(0.U(22.W))
   val maxCreditChannelDebug = RegInit(0.U(3.W))
   val maxCreditDebug = RegInit(0.U(16.W))
 
   val txAccChannel = RegInit(0.U(3.W))
-  val txAccCredit = RegInit(0.U(5.W))
-  */
+  val txAccCredit = RegInit(0.U(16.W))
 
-  val txAccChannel = RegInit(0.U(3.W))
-  val txAccCredit = RegInit(0.U(5.W))
-
-  /*
   when(io.maxCreditChannel =/= 0.U) {
     maxCreditChannelDebug := io.maxCreditChannel
-    maxCreditDebug := io.maxCredit
+    maxCreditDebug := io.maxCredit  // Use the maxCredit output from FlowControl
   }
-  */
+
+  val tx_debug_txState = RegInit(0.U(4.W))
+  tx_debug_txState := txState
+
+  val tx_debug_txQueueCnt = RegInit(0.U(3.W))
+  tx_debug_txQueueCnt := txQueue.io.count
+
+  def initNextQueueItem() = {
+    nextChan := 0.U
+    nextOpcode := 0.U
+    nextParam := 0.U
+    nextSize := 0.U
+    nextSource := 0.U
+    nextAddr := 0.U
+    nextData := 0.U
+  }
 
   switch(txState) {
     is(txIdle) {
+      initNextQueueItem()
+
+      txAccChannel := 0.U
+      txAccCredit := 0.U
+
       when(txComplete) {
-        when(io.ackAckonly) {
+        when(ackAckonly) {
           txState := txAckOnly
+
         }.otherwise {
           txState := txCheckFrame
         }
       }
     }
 
+    // TODO 처리할 메시지가 있으며 ackonly 프레임을 보내야할까?
     is(txAckOnly) {
       astate := amakeFrame
-      io.ackAckonlyDone := true.B
       txComplete := false.B
 
       txState := txDone
     }
 
     is(txCheckFrame) {
+      //when (!io.retransmitIsFull && txQueue.io.deq.valid) {
+      when (txQueue.io.deq.valid) {
+        nextChan := txQueue.io.deq.bits.chan
+        nextOpcode := txQueue.io.deq.bits.opcode
+        nextParam := txQueue.io.deq.bits.param
+        nextSize := txQueue.io.deq.bits.size
+        nextSource := txQueue.io.deq.bits.source
+        nextAddr := txQueue.io.deq.bits.addr
+        nextData := txQueue.io.deq.bits.data
+        txQueue.io.deq.ready := true.B
+
+        isFrame := true.B
+      }
       txState := txCheckAck
     }
-    
     is(txCheckAck) {
       when(ackReadyFlag) {
         isACK := true.B
@@ -249,25 +291,24 @@ class TLOETransmitter extends Module {
       txState := txCheckCredit
     }
 
-    is(txCheckCredit) {
-      /*
-      when(maxAccChannel =/= 0.U) {
-        when(maxAccCredit > 0.U) {
-          isCredit := true.B
 
-          txAccChannel := maxAccChannel
-          txAccCredit := maxAccCredit
-        }
+    // If AccChanCredits exists, transmit it together with the next packet
+    is(txCheckCredit) {
+      when(maxAccChannel =/= 0.U) {
+        isCredit := true.B
+
+        txAccChannel := maxAccChannel
+        txAccCredit := maxAccCredit
       }
-      */
       txState := txInitFrame
     } 
 
     is(txInitFrame) {
       when(isFrame) {
-        txPacket := OXPacket.initFrame(nextAddr, nextOpcode, nextData, io.nextTxSeq, TLOESeqManager.getPrevSeq(io.nextRxSeq), io.ackType, txAccChannel, txAccCredit, nextSize, nextParam, nextSource)
-        txPacketSize := nextSize
+        txFrame := OXPacket.initFrame(nextChan, nextAddr, nextOpcode, nextData, io.nextTxSeq, TLOESeqManager.getPrevSeq(io.nextRxSeq), io.ackType, txAccChannel, txAccCredit, nextSize, nextParam, nextSource)
+        txFrameSize := nextSize
 
+        //TODO false all??
         isFrame := false.B
         isACK := false.B
         txComplete := false.B
@@ -278,9 +319,10 @@ class TLOETransmitter extends Module {
 
         txState := txHandleCredit
       }.elsewhen(isACK || isCredit) {
-        txPacket := OXPacket.normalAck_896(io.nextTxSeq, TLOESeqManager.getPrevSeq(io.nextRxSeq), 1.U, txAccChannel, txAccCredit)
-        txPacketSize := 0.U
+        txFrame := OXPacket.normalAck(io.nextTxSeq, TLOESeqManager.getPrevSeq(io.nextRxSeq), 1.U, txAccChannel, txAccCredit)
+        txFrameSize := 0.U
 
+        //TODO false all??
         isFrame := false.B
         isACK := false.B
         txComplete := false.B
@@ -291,21 +333,20 @@ class TLOETransmitter extends Module {
 
         txState := txHandleAccCredit
       }.otherwise {
-        txState := txIdle
+        txState := txDone
       }
     }
 
     is(txHandleCredit) {
-      /*
       // Flow Control : decrease credit based on message type
-      val decFlits = TlMsgFlits.getFlitsCnt(1.U, nextOpcode, nextSize)
-      val hasEnoughCredit = io.credits(1.U) >= decFlits
+      //val decFlits = TlMsgFlits.getFlitsCnt(nextChan, nextOpcode, nextSize)
+      val decFlits = TloePacGen.getFlitSize(nextChan, nextOpcode, nextSize)
 
-      when(hasEnoughCredit) {
-        io.decCreditValid := true.B
-        io.decCreditChannel := 1.U  // Channel A
-        io.decCreditAmount := decFlits 
-        creditADecCntDebug := creditADecCntDebug + decFlits
+      when(io.credits(nextChan) >= decFlits) {
+        io.decCreditValid   := true.B
+        io.decCreditChannel := nextChan
+        io.decCreditAmount  := decFlits 
+        creditADecCntDebug  := creditADecCntDebug + decFlits
         txState := txHandleAccCredit
       }.otherwise {
         io.decCreditValid := false.B
@@ -313,42 +354,45 @@ class TLOETransmitter extends Module {
         io.decCreditAmount := 0.U
         txState := txHandleCredit  // Stay in the same state if not enough credit
       }
-      */
     }
 
     is(txHandleAccCredit) {
-      /*
-      when(isCredit) {
-        io.decAccCreditValid := true.B
+      //Flow Control
+      when (txAccChannel =/= 0.U) {
         io.decAccCreditChannel := txAccChannel
         io.decAccCreditAmount := (1.U << txAccCredit)
+        io.decAccCreditValid := true.B
 
         isCredit := false.B
-      }.otherwise {
-        txAccChannel := 0.U
-        txAccCredit := 0.U
-
-        txState := txPrepareSend
       }
-      */
-        txState := txPrepareSend
+
+      txState := txPrepareSend
     }
 
     is(txPrepareSend) {
-      // Prepare the read packet by dividing rPacket into 64-bit segments and storing in txPacketVec
-      txPacketVec := VecInit(Seq.tabulate(14) { i => txPacket(896 - (64 * i) - 1, 896 - 64 * (i + 1))
-      })
-      txPacketVecSize := Mux(nextOpcode === 4.U, 9.U, Mux(txPacketSize <= 5.U, 9.U, 14.U))
+      io.txData := txFrame
+      io.txFlitSize := TloePacGen.getFlitSize(nextChan, nextOpcode, nextSize)
+      io.txStart := true.B
 
       // Increase sequence number
-      io.incTxSeq := true.B
-
-      sendPacket := true.B // Indicate that packet is ready to send
+      io.incTxSeq := true.B  // Set incTxSeq when incrementing TX sequence
 
       txState := txEnqRetransmit
     }
 
     is(txEnqRetransmit) {
+        /*
+      // Enqueue the packet to the retransmit buffer
+      // TODO check if retransmitter is ready
+      io.retransmitWrite.tloeFrame := txFrame
+      //io.retransmitWrite.tloeFrameSize := txFrameSize
+      io.retransmitWrite.tloeFrameSize := TloePacGen.getFlitSize(nextChan, nextOpcode, nextSize)
+      io.retransmitWrite.state := 0.U(2.W)  // Initial state
+      io.retransmitWrite.sendTime := io.currTime  // Use global timer 
+
+      io.retransmitWriteValid := true.B  // Set valid signal when writing
+      */
+
       txState := txDone
     }
 
@@ -360,61 +404,30 @@ class TLOETransmitter extends Module {
     }
   }
 
+/*
+  //Debug
+  var isRetransmit = RegInit(false.B)
+  isRetransmit := io.isRetransmit
+*/
+
   //////////////////////////////////////////////////////////////////
   // Packet Sending Logic
+  // TODO need to define as function
+  val debug_txEtherTxReady = RegInit(false.B)
+  debug_txEtherTxReady := io.txReady
 
-  val delayCounter = RegInit(0.U(32.W))
-  val delayActive = RegInit(false.B)
-  val delayValue = RegInit(0.U(32.W))
-
-  delayValue := 16.U
-
-  // State machine for sending packets via AXI-Stream interface
-  when(sendPacket) {
-    when (delayActive) {
-      axi_txvalid := false.B
-      axi_txlast := false.B
-
-      when (delayCounter < delayValue) {
-        delayCounter := delayCounter + 1.U
-      }.otherwise {
-        delayCounter := 0.U
-        delayActive := false.B
-      }
-    }.elsewhen (idx < txPacketVecSize) {
-      // Store current packet data in axi_txdata
-      axi_txdata := TloePacGen.toBigEndian(txPacketVec(idx))
-      axi_txvalid := true.B // Set valid signal
-      idx := idx + 1.U // Move to next packet
-
-      // Check if this is the last packet
-      when(idx === (txPacketVecSize - 1.U)) {
-        axi_txlast := true.B // Set last packet flag
-        axi_txkeep := 0x3f.U // Last packet flag
-        delayActive := true.B
-        idx := 20.U // Reset index
-      }.otherwise {
-        axi_txlast := false.B
-        axi_txkeep := 0xff.U
-      }
-    }.otherwise {
-      // Reset values after packet sending
-      axi_txdata := 0.U
-      axi_txvalid := false.B
-      axi_txlast := false.B
-      axi_txkeep := 0.U
-
-      idx := 0.U
-      sendPacket := false.B
-      txComplete := true.B
-      delayCounter := 0.U
-      delayActive := false.B
-    }
+  when(io.txReady) {
+    sendPacket := false.B
+    txComplete := true.B
   }
 
   //////////////////////////////////////////////////////////////////
   // SEND - Packet Send (Ack Only)
 
+  val debug_nAckPacket = RegInit(0.U(512.W))
+  debug_nAckPacket := nAckPacket(4223, 3712)
+
+  // Send an ACKONLY frame
   switch(astate) {
     // Create normal frame
     is(amakeFrame) {
@@ -422,23 +435,87 @@ class TLOETransmitter extends Module {
       astate := asendRequest
     }
 
-    // Send ack only frame
     is(asendRequest) {
-      // Prepare the read packet by dividing rPacket into 64-bit segments and storing in txPacketVec
-      txPacketVec := VecInit(Seq.tabulate(9) { i =>
-        nAckPacket(576 - (64 * i) - 1, 576 - 64 * (i + 1))
-      } ++ Seq.fill(5)(0.U(64.W)))
-
-      txPacketVecSize := 9.U // Set the size of the packet vector
+      io.txData := nAckPacket
+      io.txFlitSize := 4.U
+      io.txStart := true.B
 
       sendPacket := true.B // Indicate that packet is ready to send
       txComplete := false.B // Reset transmission complete flag
+      io.ackAckonlyDone := true.B
 
-      astate := adone // Move to wait for credit acknowledgment
+      astate := adone // Move to wait f/isor credit acknowledgment
     }
 
     is(adone) {
       astate := aidle
     }
   }
+
+  //////////////////////////////////////////////////////////////////
+  // DEBUG
+  //////////////////////////////////////////////////////////////////
+  /*
+  dontTouch(epConn)
+  dontTouch(astate)
+  dontTouch(tx_size)
+  dontTouch(nextChan)
+  dontTouch(nextOpcode)
+  dontTouch(nextParam)
+  dontTouch(nextSize)
+  dontTouch(nextSource)
+  dontTouch(nextAddr)
+  dontTouch(nextData)
+  dontTouch(isFrame)
+  dontTouch(isACK)
+  dontTouch(isCredit)
+  dontTouch(maxAccChannel)
+  dontTouch(maxAccCredit)
+
+  dontTouch(txFrameSize)
+  dontTouch(txRequiredFlits)
+
+  dontTouch(sendPacket)
+  dontTouch(txComplete)
+  dontTouch(idx)
+
+  dontTouch(axi_txdata)
+  dontTouch(axi_txvalid)
+  dontTouch(axi_txlast)
+  dontTouch(axi_txkeep)
+
+  dontTouch(testReadAddr)
+
+  dontTouch(ackReadyFlag)
+  dontTouch(ackTypeFlag)
+  dontTouch(ackSeqNumFlag)
+
+  dontTouch(debug_tlChan)
+  dontTouch(debug_tlOpcode)
+  dontTouch(debug_tlParam)
+  dontTouch(debug_tlSize)
+  dontTouch(debug_tlSource)
+  dontTouch(debug_tlAddr)
+  dontTouch(debug_tlData)
+  dontTouch(debug_tlValid)
+
+  dontTouch(creditADecCntDebug)
+  dontTouch(maxCreditChannelDebug)
+  dontTouch(maxCreditDebug)
+  dontTouch(txAccChannel)
+  dontTouch(txAccCredit)
+
+  dontTouch(isRetransmit)
+  dontTouch(debug_txAckAckonly)
+  dontTouch(debug_txEtherTxReady)
+  dontTouch(ackAckonly)
+  dontTouch(debug_nAckPacket)
+  dontTouch(debug_txAckCnt)
+  dontTouch(debug_tloeEtherTxData)
+  dontTouch(debug_tloeEtherTxFlitSize)
+  dontTouch(txState)
+
+  dontTouch(debug_txFrame)
+  dontTouch(debug_txFrameSize)
+  */
 } 
