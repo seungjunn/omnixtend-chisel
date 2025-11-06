@@ -81,20 +81,13 @@ class TLOEEndpoint extends Module {
   io.srcMac := 0.U
   io.destMac := 0.U
 
-/*
   val doth_ep = RegInit(false.B)
   doth_ep := receiver.io.doTilelinkHandler
-  */
 
-/*
   // Connect to TileLink_Handler
   io.tlMsg := receiver.io.tlMsg
   io.tlMsgMask := receiver.io.tlMsgMask
   io.doTilelinkHandler := receiver.io.doTilelinkHandler
-  */
-  io.tlMsg := 0.U
-  io.tlMsgMask := 0.U
-  io.doTilelinkHandler := false.B
 
   // QSFP1
   // Connect TLOEEther to external interface
@@ -109,11 +102,8 @@ class TLOEEndpoint extends Module {
   ether_qsfp1.io.rxvalid := io.rxvalid
   ether_qsfp1.io.rxlast := io.rxlast
 
-/*
   // Connect endpoint ready signal to TLOEEther
   ether_qsfp1.io.endpointRxReady := receiver.io.rxReady
-  */
-  ether_qsfp1.io.endpointRxReady := false.B
   
   transmitter.io.txReady := ether_qsfp1.io.internalTxReady
   //retransmission.io.txReady := ether_qsfp1.io.internalTxReady
@@ -142,23 +132,16 @@ class TLOEEndpoint extends Module {
   // Sequence Manager
   tloeSeqNum.io.reset := false.B  // Reset is handled by the node's reset
   tloeSeqNum.io.incTxSeq := transmitter.io.incTxSeq
-  /*
   tloeSeqNum.io.incRxSeq := receiver.io.incRxSeq
   tloeSeqNum.io.updateAckSeq := receiver.io.updateAckSeq
   tloeSeqNum.io.newAckSeq := receiver.io.newAckSeq
-  */
-  tloeSeqNum.io.incRxSeq := true.B
-  tloeSeqNum.io.updateAckSeq := true.B
-  tloeSeqNum.io.newAckSeq := 0.U
 
   transmitter.io.nextTxSeq := tloeSeqNum.io.nextTxSeq
   transmitter.io.nextRxSeq := tloeSeqNum.io.nextRxSeq
   transmitter.io.ackdSeq := tloeSeqNum.io.ackdSeq
 
-/*
   receiver.io.nextTxSeq := tloeSeqNum.io.nextTxSeq
   receiver.io.nextRxSeq := tloeSeqNum.io.nextRxSeq
-  */
 
   transmitter.io.tlChan := io.tlChan
   transmitter.io.tlOpcode := io.tlOpcode
@@ -170,7 +153,6 @@ class TLOEEndpoint extends Module {
   transmitter.io.tlMask := io.tlMask
   transmitter.io.tlValid := io.tlValid
 
-/*
   // Route ethernet RX from TLOEEther to appropriate modules based on isConn state and ready status
   when(ether_qsfp1.io.endpointRxValid) {
       // Normal mode: send to receiver module
@@ -189,10 +171,9 @@ class TLOEEndpoint extends Module {
     receiver.io.rxValid := false.B
     receiver.io.rxFlitSize := 0.U
   }
-  */
 
-/*
   receiver.io.nextRxSeq := tloeSeqNum.io.nextRxSeq
+/*
   receiver.io.slideDone := retransmission.io.slideDone
   receiver.io.retransmitDone := retransmission.io.retransmitDone
   */
@@ -214,24 +195,14 @@ class TLOEEndpoint extends Module {
   transmitter.io.maxCreditChannel := flowControl.io.maxCreditChannel
   transmitter.io.maxCredit := flowControl.io.maxCredit
 
-/*
   // Flow Control
   flowControl.io.incCredit.valid := receiver.io.incCreditValid
   flowControl.io.incCredit.channel := receiver.io.incCreditChannel
   flowControl.io.incCredit.credit := receiver.io.incCreditAmount
-  */
-  flowControl.io.incCredit.valid := false.B
-  flowControl.io.incCredit.channel := 0.U
-  flowControl.io.incCredit.credit := 0.U
 
-/*
   flowControl.io.incAccCredit.valid := receiver.io.incAccCreditValid
   flowControl.io.incAccCredit.channel := receiver.io.incAccCreditChannel
   flowControl.io.incAccCredit.credit := receiver.io.incAccCreditAmount
-  */
-  flowControl.io.incAccCredit.valid := io.incAccCreditValid
-  flowControl.io.incAccCredit.channel := io.incAccCreditChannel
-  flowControl.io.incAccCredit.credit := io.incAccCreditAmount
   
   // TODO 사용하는지??? credits, accCredits, error
   //receiver.io.credits := flowControl.io.credits
@@ -271,22 +242,15 @@ class TLOEEndpoint extends Module {
   transmitter.io.modeConn := io.modeConn
   ether_qsfp1.io.modeConn := io.modeConn
 
-/*
   // transmitter <> receiver
   transmitter.io.ackSeqNum := receiver.io.ackSeqNum
   transmitter.io.ackType := receiver.io.ackType
   transmitter.io.ackReady := receiver.io.ackReady
   transmitter.io.ackAckonly := receiver.io.ackAckonly
   receiver.io.ackAckonlyDone := transmitter.io.ackAckonlyDone
-  */
-  transmitter.io.ackSeqNum := 0.U
-  transmitter.io.ackType := 0.U
-  transmitter.io.ackReady := false.B
-  transmitter.io.ackAckonly := false.B
 
   transmitter.io.debug1 := io.ox_debug1
   transmitter.io.debug2 := io.ox_debug2
-
 
   //////////////////////////////////////////////////////////////
   // DEBUG
