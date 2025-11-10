@@ -50,14 +50,12 @@ class TLOETransmitter extends Module {
     //val error = Input(Bool())
     val maxCredit = Input(UInt(16.W))
 
-/*
     // Retransmission
     val retransmitWrite = Output(new RetransmitBufferElement)
     val retransmitWriteValid = Output(Bool())
     val retransmitIsFull = Input(Bool())
 
     val isRetransmit = Input(Bool())
-    */
 
     // Timer
     val currTime = Input(UInt(64.W))
@@ -94,13 +92,11 @@ class TLOETransmitter extends Module {
   io.decAccCreditChannel := 0.U
   io.decAccCreditAmount := 0.U
 
-/*
   io.retransmitWrite.tloeFrame := 0.U(TLOE_FRAME_SIZE.W)
   io.retransmitWrite.tloeFrameSize := 0.U(5.W)
   io.retransmitWrite.state := 0.U(2.W)
   io.retransmitWrite.sendTime := 0.U(64.W)
   io.retransmitWriteValid := false.B
-  */
 
   io.ackAckonlyDone := false.B
 
@@ -109,8 +105,8 @@ class TLOETransmitter extends Module {
 
   // Reduced from 12 to 8 states to save LUTs
   // Merged: txCheckAck+txCheckCredit -> txCheckFrame
-  // Merged: txHandleAccCredit+txPrepareSend+txEnqRetransmit -> txHandleCredit
-  val txIdle :: txAckOnly :: txCheckFrame :: txInitFrame :: txHandleCredit :: txSendPacket :: txDone :: Nil = Enum(7)
+  // Merged: txHandleAccCredit+txPrepareSend -> txHandleCredit
+  val txIdle :: txAckOnly :: txCheckFrame :: txInitFrame :: txHandleCredit :: txSendPacket :: txEnqRetransmit :: txDone :: Nil = Enum(8)
   val txState = RegInit(txIdle)
 
   val aidle :: amakeFrame :: asendRequest :: adone :: Nil = Enum(4)
@@ -362,6 +358,20 @@ class TLOETransmitter extends Module {
       io.txStart := true.B
       io.incTxSeq := true.B
       txComplete := false.B
+      txState := txEnqRetransmit
+    }
+
+    is(txEnqRetransmit) {
+      // Enqueue the packet to the retransmit buffer
+      // TODO check if retransmitter is ready
+      io.retransmitWrite.tloeFrame := txPacketWire
+      //io.retransmitWrite.tloeFrameSize := txFrameSize
+      io.retransmitWrite.tloeFrameSize := TloePacGen.getFlitSize(nextChan, nextOpcode, nextSize)
+      io.retransmitWrite.state := 0.U(2.W)  // Initial state
+      io.retransmitWrite.sendTime := io.currTime  // Use global timer 
+
+      io.retransmitWriteValid := true.B  // Set valid signal when writing
+
       txState := txDone
     }
 

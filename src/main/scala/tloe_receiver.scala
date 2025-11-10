@@ -26,7 +26,6 @@ class TLOEReceiver extends Module {
     val incAccCreditChannel = Output(UInt(3.W))
     val incAccCreditAmount = Output(UInt(5.W))
 
-/*
     // Slide Window
     val slideValid = Output(Bool())
     val slideSeqNumAck = Output(UInt(22.W))
@@ -36,7 +35,6 @@ class TLOEReceiver extends Module {
     val retransmitDone = Input(Bool()) // TODO Ready??
     val retransmitSeqNum = Output(UInt(22.W))
     val retransmitValid = Output(Bool())
-    */
 
     // Transfer ack info to Tx
     val ackSeqNum = Output(UInt(22.W))
@@ -66,10 +64,8 @@ class TLOEReceiver extends Module {
   val rxReadyReg = RegInit(true.B)
   io.rxReady := rxReadyReg
   
-  // State registers - Reduced from 12 to 7 states to save LUTs
-  // Merged: rxSlideWindow+rxRetransmission+rxAckOnly -> rxCheckType
-  // Merged: rxHandleCredit+rxHandleAccCredit -> rxHandleCredits
-  val rxIdle :: rxPacketReceived :: rxCheckType :: rxFrameNormal :: rxFrameDup :: rxFrameOOS :: rxDone :: Nil = Enum(7)
+  // State registers
+  val rxIdle :: rxPacketReceived :: rxSlideWindow :: rxRetransmission :: rxAckOnly :: rxCheckType :: rxFrameNormal :: rxFrameDup :: rxFrameOOS :: rxDone :: Nil = Enum(10)
   val rxState = RegInit(rxIdle)
 
   val tloeHeader = Reg(new tloeHeader)
@@ -98,13 +94,11 @@ class TLOEReceiver extends Module {
   io.incAccCreditChannel := 0.U
   io.incAccCreditAmount := 0.U
 
-/*
   io.slideValid := false.B
   io.slideSeqNumAck := 0.U
 
   io.retransmitSeqNum := 0.U
   io.retransmitValid := false.B
-  */
 
   io.ackSeqNum := 0.U
   io.ackType := 0.U
@@ -176,7 +170,41 @@ class TLOEReceiver extends Module {
       // Extract mask directly from frame - no Vec indexing needed
       val maskBitPos = (rxFlitSize - 1.U) * 64.U
       rxFrameMask := (rxFrameInput >> maskBitPos)(63, 0)
-      rxState := rxCheckType
+      rxState := rxSlideWindow
+    }
+
+    is(rxSlideWindow) {
+      // Serve Ack
+      io.slideValid := true.B
+      io.slideSeqNumAck := rxTloeHeader.seqNumAck
+
+      when (io.slideDone) {
+        rxState := rxRetransmission
+      }
+    }
+
+    is(rxRetransmission) {
+      // In case of NAK, retransmit the frame in the retransmit buffer
+      when (rxTloeHeader.ack === TLOE_NAK) {
+        io.retransmitValid := true.B
+        io.retransmitSeqNum := rxTloeHeader.seqNumAck
+      }.otherwise {
+        rxState := rxAckOnly
+      }
+
+      when (io.retransmitDone) {
+        rxState := rxAckOnly
+      }
+    }
+
+    is(rxAckOnly) {
+      when(rxTloeHeader.msgType === TLOE_TYPE_ACKONLY && rxTloeHeader.ack === TLOE_ACK) {
+        io.newAckSeq := rxTloeHeader.seqNumAck
+        io.updateAckSeq := true.B  // Set updateAckSeq when ackdSeq is updated
+        rxState := rxDone
+      }.otherwise {
+        rxState := rxCheckType
+      }
     }
 
     is(rxCheckType) {
@@ -193,8 +221,6 @@ class TLOEReceiver extends Module {
           rxState := rxFrameOOS
         }
       }
-
-      rxState := rxFrameNormal
     }
 
     is(rxFrameNormal) {

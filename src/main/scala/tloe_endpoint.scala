@@ -106,7 +106,7 @@ class TLOEEndpoint extends Module {
   ether_qsfp1.io.endpointRxReady := receiver.io.rxReady
   
   transmitter.io.txReady := ether_qsfp1.io.internalTxReady
-  //retransmission.io.txReady := ether_qsfp1.io.internalTxReady
+  retransmission.io.txReady := ether_qsfp1.io.internalTxReady
   
   // Connect modules to TLOEEther internal interface
   // Priority: connection > transmitter > retransmission
@@ -115,13 +115,11 @@ class TLOEEndpoint extends Module {
     ether_qsfp1.io.internalTxData := transmitter.io.txData
     ether_qsfp1.io.internalTxFlitSize := transmitter.io.txFlitSize
     ether_qsfp1.io.internalTxValid := true.B  // Signal to add packet to queue
-    /*
   }.elsewhen(retransmission.io.txStart) {
     // Retransmission module lowest priority
     ether_qsfp1.io.internalTxData := retransmission.io.txData
     ether_qsfp1.io.internalTxFlitSize := retransmission.io.txFlitSize
     ether_qsfp1.io.internalTxValid := true.B  // Signal to add packet to queue
-    */
   }.otherwise {
     // No module requesting TX
     ether_qsfp1.io.internalTxData := 0.U
@@ -173,10 +171,8 @@ class TLOEEndpoint extends Module {
   }
 
   receiver.io.nextRxSeq := tloeSeqNum.io.nextRxSeq
-/*
   receiver.io.slideDone := retransmission.io.slideDone
   receiver.io.retransmitDone := retransmission.io.retransmitDone
-  */
 
   // Sequence Management
   tloeSeqNum.io.reset := false.B
@@ -213,7 +209,6 @@ class TLOEEndpoint extends Module {
   timer.io.resetTimer := false.B
   transmitter.io.currTime := timer.io.globalTimer
   transmitter.io.modeConn := io.modeConn
-  /*
   retransmission.io.currTime := timer.io.globalTimer
 
   // Retransmission
@@ -230,7 +225,6 @@ class TLOEEndpoint extends Module {
   transmitter.io.isRetransmit := retransmission.io.isRetransmit
 
   isRetransmit := retransmission.io.isRetransmit
-  */
 
   // Connect connection module to TLOEEther (already done above)
   // connection.io.tloeEtherTxData, tloeEtherTxStart, tloeEtherTxReady
