@@ -4,12 +4,19 @@ import chisel3._
 import chisel3.util._
 
 object OmniXtendConstants {
-  val TLOE_MAX_FLITS = 64
+  // MASSIVE LUT REDUCTION: Reduce max flits from 64 to 10
+  // 64 flits = 4224 bits → 10 flits = 768 bits (81% reduction!)
+  // This reduces ALL large packet buffers proportionally
+  val TLOE_MAX_FLITS = 10  // = 10
 
-  val TOTAL_TILELINK_SIZE = (TLOE_MAX_FLITS * 32)  // TLOE_MAX_FLITS * 64EA(bits)
-  val TLOE_ETHER_HEADER_SIZE = (2 * 8 * 8)
-  val TLOE_FRAME_SIZE = ((TLOE_MAX_FLITS+2) * 8 * 8)
-  val TLOE_PACKET_SIZE = TLOE_ETHER_HEADER_SIZE + TLOE_FRAME_SIZE
+  // TILELINK_SIZE: 64bit * 8개(payload) + 64bit * 2개(header) = 10 * 64 = 640 bits
+  val TOTAL_TILELINK_SIZE = (TLOE_MAX_FLITS * 64)  // = 10 * 64 = 640 bits
+  // TLOE_FRAME_SIZE: 64비트 * 12개 = 768 bits (TILELINK_SIZE + TLOE_HEADER + MASK)
+  val TLOE_FRAME_SIZE = ((TLOE_MAX_FLITS+2) * 64)  // = (10+2) * 64 = 12 * 64 = 768 bits
+  // 이더넷 헤더: SRC MAC(48) + DEST MAC(48) + ETHER_TYPE(16) = 112 bits
+  val TLOE_ETHER_HEADER_SIZE = (48 + 48 + 16)  // = 112 bits
+  // TLOE_PACKET_SIZE: TLOE_FRAME_SIZE + 이더넷 헤더
+  val TLOE_PACKET_SIZE = TLOE_ETHER_HEADER_SIZE + TLOE_FRAME_SIZE  // = 112 + 768 = 880 bits
 
   val TLOE_NAK = 0.U(1.W)
   val TLOE_ACK = 1.U(1.W)

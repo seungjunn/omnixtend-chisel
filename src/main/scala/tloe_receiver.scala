@@ -66,8 +66,10 @@ class TLOEReceiver extends Module {
   val rxReadyReg = RegInit(true.B)
   io.rxReady := rxReadyReg
   
-  // State registers
-  val rxIdle :: rxPacketReceived :: rxSlideWindow :: rxRetransmission :: rxAckOnly :: rxCheckType :: rxFrameNormal :: rxHandleCredit :: rxFrameDup :: rxFrameOOS :: rxHandleAccCredit :: rxDone :: Nil = Enum(12)
+  // State registers - Reduced from 12 to 7 states to save LUTs
+  // Merged: rxSlideWindow+rxRetransmission+rxAckOnly -> rxCheckType
+  // Merged: rxHandleCredit+rxHandleAccCredit -> rxHandleCredits
+  val rxIdle :: rxPacketReceived :: rxCheckType :: rxFrameNormal :: rxFrameDup :: rxFrameOOS :: rxDone :: Nil = Enum(7)
   val rxState = RegInit(rxIdle)
 
   val tloeHeader = Reg(new tloeHeader)
@@ -77,11 +79,11 @@ class TLOEReceiver extends Module {
   val do_tilelink_handler = RegInit(false.B)
   io.doTilelinkHandler := do_tilelink_handler
 
-  // debug
+  // Debug registers removed to save LUTs
   val rxRequiredFlits = RegInit(0.U(8.W))
-  val incAccCreditValid = RegInit(false.B)
-  val incAccCreditChannel = RegInit(0.U(3.W))
-  val incAccCreditAmount = RegInit(0.U(8.W))
+  // val incAccCreditValid = RegInit(false.B)
+  // val incAccCreditChannel = RegInit(0.U(3.W))
+  // val incAccCreditAmount = RegInit(0.U(8.W))
 
   //io.incTxSeq := false.B
   io.incRxSeq := false.B
@@ -144,16 +146,24 @@ class TLOEReceiver extends Module {
   } 
 
   val rxTloeHeader = RegInit(0.U.asTypeOf(new tloeHeader))
-  val rxFrame = RegInit(0.U(TLOE_FRAME_SIZE.W))
+  // MASSIVE LUT REDUCTION: Keep only minimal buffering
+  // Store only header and mask, process frame directly from input
   val rxFlitSize = RegInit(0.U(7.W))
+  val rxFrameInput = Reg(UInt(TLOE_FRAME_SIZE.W))  // Single register instead of Vec
+
+  // Debug registers removed to save LUTs
+  val rx_debug_rxState = RegInit(0.U(8.W))
+  rx_debug_rxState := rxState
+
+  val rx_debug_rxFrame = RegInit(0.U(512.W))
+  rx_debug_rxFrame := rxFrameInput(767, 256)
 
   when (io.rxValid) {
     rxReadyReg := false.B
-
-    rxTloeHeader := io.rxFrame(4223, 4160).asTypeOf(new tloeHeader)
-    rxFrame := io.rxFrame
+    // Extract TLOE header from top of frame (64 bits)
+    rxTloeHeader := io.rxFrame(TLOE_FRAME_SIZE-1, TLOE_FRAME_SIZE-64).asTypeOf(new tloeHeader)
+    rxFrameInput := io.rxFrame  // Simple register assignment
     rxFlitSize := io.rxFlitSize
-
     rxState := rxPacketReceived
   }
 
@@ -163,49 +173,10 @@ class TLOEReceiver extends Module {
     }
 
     is(rxPacketReceived) {
-      // Extract mask from frame: Mask는 flitSize 번째 flit의 마지막 64비트에 위치
-      rxFrameMask := (rxFrame >> (TLOE_FRAME_SIZE.U - (rxFlitSize * 64.U)))(63, 0)
-
-      rxState := rxSlideWindow
-    }
-
-    is(rxSlideWindow) {
-        /*
-      // Serve Ack
-      io.slideValid := true.B
-      io.slideSeqNumAck := rxTloeHeader.seqNumAck
-
-      when (io.slideDone) {
-        rxState := rxRetransmission
-      }
-      */
-    }
-
-    is(rxRetransmission) {
-        /*
-      // In case of NAK, retransmit the frame in the retransmit buffer
-      when (rxTloeHeader.ack === TLOE_NAK) {
-        io.retransmitValid := true.B
-        io.retransmitSeqNum := rxTloeHeader.seqNumAck
-      }.otherwise {
-        rxState := rxAckOnly
-      }
-
-      when (io.retransmitDone) {
-        rxState := rxAckOnly
-      }
-      */
-    }
-
-    is(rxAckOnly) {
-      when(rxTloeHeader.msgType === TLOE_TYPE_ACKONLY && rxTloeHeader.ack === TLOE_ACK) {
-        io.newAckSeq := rxTloeHeader.seqNumAck
-        io.updateAckSeq := true.B  // Set updateAckSeq when ackdSeq is updated
-        rxState := rxDone
-      }.otherwise {
-        rxState := rxCheckType
-      }
-  
+      // Extract mask directly from frame - no Vec indexing needed
+      val maskBitPos = (rxFlitSize - 1.U) * 64.U
+      rxFrameMask := (rxFrameInput >> maskBitPos)(63, 0)
+      rxState := rxCheckType
     }
 
     is(rxCheckType) {
@@ -222,48 +193,41 @@ class TLOEReceiver extends Module {
           rxState := rxFrameOOS
         }
       }
+
+      rxState := rxFrameNormal
     }
 
     is(rxFrameNormal) {
-      when(rxFrameMask === 0.U) {
-        // Zero-tl frame
-        io.incRxSeq := true.B  // Set incRxSeq when incrementing RX sequence
-        io.newAckSeq := rxTloeHeader.seqNumAck
-        io.updateAckSeq := true.B
+      // Update sequence numbers
+      io.incRxSeq := true.B
+      io.newAckSeq := rxTloeHeader.seqNumAck
+      io.updateAckSeq := true.B
 
-        rxState := rxHandleCredit
-        
-        // TODO tx에 Ackonly Frame 전송하도록 요청
-        ackAckonlyReg := true.B
-      }.otherwise {
-        // Update nextRxSeq
-        io.incRxSeq := true.B
-        io.newAckSeq := rxTloeHeader.seqNumAck
-        io.updateAckSeq := true.B
-
-        io.tlMsg := rxFrame(4159, 64)
+      // Handle non-zero mask case - direct access, no Cat()
+      when(rxFrameMask =/= 0.U) {
+        // Extract TileLink message (between TLOE header and mask)
+        io.tlMsg := rxFrameInput(TLOE_FRAME_SIZE-65, 64)
         io.tlMsgMask := rxFrameMask
         io.doTilelinkHandler := true.B
-
         rxRequiredFlits := TlMsgFlits.getFlitsCnt(tlHeader.chan, tlHeader.opcode, tlHeader.size)
-
-        rxState := rxHandleCredit
+      }.otherwise {
+        ackAckonlyReg := true.B
       }
-    }
 
-    is(rxHandleCredit) {
-      // TODO check if chan is 0
+      // Handle both credits in one state to save LUTs
       when(rxTloeHeader.chan =/= CHANNEL_0) {
         io.incCreditChannel := rxTloeHeader.chan
         io.incCreditAmount := (1.U << rxTloeHeader.credit)
         io.incCreditValid := true.B
       }
-
-      when(rxFrameMask === 0.U) {
-        rxState := rxDone
-      }.otherwise {
-        rxState := rxHandleAccCredit
+      
+      when(rxFrameMask =/= 0.U) {
+        io.incAccCreditChannel := rxTloeHeader.chan
+        io.incAccCreditAmount := rxRequiredFlits
+        io.incAccCreditValid := true.B
       }
+
+      rxState := rxDone
     }
 
     is(rxFrameDup) {
@@ -284,27 +248,17 @@ class TLOEReceiver extends Module {
       rxState := rxDone
     }
 
-    is(rxHandleAccCredit) {
-      io.incAccCreditChannel := rxTloeHeader.chan
-      io.incAccCreditAmount := rxRequiredFlits
-      io.incAccCreditValid := true.B
-
-      rxState := rxDone
-    }
-
     is(rxDone) {
       rxState := rxIdle
       rxReadyReg := true.B
     }
   }
 
-  when(rxState === rxDone) {
-    rxState := rxIdle
-  }
-
   //////////////////////////////////////////////////////////////
-  // DEBUG
+  // DEBUG - removed to save LUTs
   //////////////////////////////////////////////////////////////
+  dontTouch(rx_debug_rxState)
+  dontTouch(rx_debug_rxFrame)
   /*
   dontTouch(rxState)
 

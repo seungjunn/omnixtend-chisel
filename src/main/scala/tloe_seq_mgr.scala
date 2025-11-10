@@ -70,33 +70,23 @@ class TLOESeqManager extends Module {
 }
 
 object TLOESeqManager {
-  // Function to compare sequence numbers with wrap around handling
+  // Optimized sequence number comparison with wrap around handling
+  // Reduced LUT usage by simplifying logic
   def seqNumCompare(seq1: UInt, seq2: UInt): SInt = {
-    val diff = Wire(SInt(23.W))
-    val maxSeq = (1 << 22).U  // 2^22
     val halfMaxSeq = (1 << 21).U  // 2^21
 
-    // Calculate absolute difference
+    // Calculate signed difference with wrap-around consideration
+    val rawDiff = (seq1 - seq2).asSInt
     val absDiff = Mux(seq1 >= seq2, seq1 - seq2, seq2 - seq1)
 
-    when(seq1 === seq2) {
-      diff := 0.S
-    }.elsewhen(absDiff <= halfMaxSeq) {
-      // Normal comparison when difference is less than half of max sequence
-      when(seq1 < seq2) {
-        diff := -1.S
-      }.otherwise {
-        diff := 1.S
-      }
-    }.otherwise {
-      // Wrap around case
-      when(seq1 < seq2) {
-        diff := 1.S  // seq1 wrapped around
-      }.otherwise {
-        diff := -1.S  // seq2 wrapped around
-      }
-    }
-    diff
+    // Simplified comparison logic
+    MuxCase(0.S, Seq(
+      (seq1 === seq2) -> 0.S,
+      (absDiff <= halfMaxSeq && seq1 > seq2) -> 1.S,
+      (absDiff <= halfMaxSeq && seq1 < seq2) -> (-1).S,
+      (absDiff > halfMaxSeq && seq1 > seq2) -> (-1).S,
+      (absDiff > halfMaxSeq && seq1 < seq2) -> 1.S
+    ))
   }
 
   /**

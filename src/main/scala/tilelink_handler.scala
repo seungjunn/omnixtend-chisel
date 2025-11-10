@@ -48,9 +48,9 @@ class TileLinkHandler extends Module {
   // Queue가 가득 찰 때 backpressure 제공
   io.tlHandlerReady := tlMsgQueue.io.enq.ready
   
-  // Enqueue 상태 디버깅 (선택사항)
-  val enqueueSuccess = io.doTilelinkHandler && tlMsgQueue.io.enq.ready
-  val queueCount = tlMsgQueue.io.count
+  // Removed debug signals to save LUTs
+  // val enqueueSuccess = io.doTilelinkHandler && tlMsgQueue.io.enq.ready
+  // val queueCount = tlMsgQueue.io.count
 
   // TileLink Handler
   val rxChanReg = RegInit(0.U(3.W))
@@ -79,39 +79,24 @@ class TileLinkHandler extends Module {
 
   val tlHeader = Reg(new TLMessageHigh)
   val tlHeaderLow = Reg(new TLMessageLow)
-  val tlHeaderData = Reg(UInt(512.W))
+  // val tlHeaderData = Reg(UInt(512.W))  // Removed - not used, saves 512 LUTs
 
+  // MASSIVE LUT REDUCTION: Use single register instead of Vec
+  // Removes Cat() and Vec overhead
   val tlMsg = Reg(UInt(4096.W))
   val tlMsgMask = Reg(UInt(64.W))
 
   val mask = Reg(UInt(64.W))
   val offset = Reg(UInt(6.W))
 
-  val debug_tl1 = RegInit(0.U(1.W))
+  // Debug registers and complex extractBits removed to save LUTs
+  // Use direct bit slicing instead of dynamic extractBits function
 
-  // Extract bit range (b, a) from UInt using shift operations
-  def extractBits(data: UInt, highBit: UInt, lowBit: UInt): UInt = {
-    val width = highBit - lowBit + 1.U
-    val shifted = data >> lowBit
-    shifted & ((1.U << width) - 1.U)
-  }
-
-  val debug_tl2 = RegInit(0.U(1.W))
-  val debug_tl3 = RegInit(0.U(1.W))
-
-  val debug_tlReadResult = Reg(UInt(512.W))
-  val debug_tlReadResult_valid = RegInit(false.B)
-  val debug_tlWriteResult = Reg(UInt(512.W))
-  val debug_tlWriteResult_valid = RegInit(false.B)
-
-  // TileLink Handler - Queue에서 메시지를 꺼내서 처리
+  // TileLink Handler - Direct register assignment, no Vec
   when(tlHandlerState === tlIdle && tlMsgQueue.io.deq.valid) {
-    // Queue에서 메시지를 꺼내기
     tlMsg := tlMsgQueue.io.deq.bits.tlMsg
     tlMsgMask := tlMsgQueue.io.deq.bits.tlMsgMask
     tlMsgQueue.io.deq.ready := true.B
-    
-    // 상태 전환
     tlHandlerState := tlGetMask
   }.otherwise {
     tlMsgQueue.io.deq.ready := false.B
@@ -131,21 +116,15 @@ class TileLinkHandler extends Module {
       tlHandlerState := tlGetTlHeader
     }
 
-    // TODO: Constants need to be modified
+    // Use shift operations for dynamic bit extraction
     is(tlGetTlHeader) {
-      // Extract TileLink Message from the found positio함함
-      val tlHeaderWire = Wire(new TLMessageHigh)
-      tlHeaderWire := (extractBits(tlMsg, 
-                                  (TOTAL_TILELINK_SIZE.U-((offset+0.U)*64.U))-1.U, 
-                                  (TOTAL_TILELINK_SIZE.U-((offset+1.U)*64.U)))).asTypeOf(new TLMessageHigh)
-      tlHeader := tlHeaderWire
-
-      val tlHeaderLowWire = Wire(new TLMessageLow)
-      tlHeaderLowWire := (extractBits(tlMsg, 
-                                  (TOTAL_TILELINK_SIZE.U-((offset+1.U)*64.U))-1.U, 
-                                  (TOTAL_TILELINK_SIZE.U-((offset+2.U)*64.U)))).asTypeOf(new TLMessageLow)
-      tlHeaderLow := tlHeaderLowWire
-
+      // Shift to align target bits to LSB, then extract fixed width
+      val shiftAmount = TOTAL_TILELINK_SIZE.U - ((offset + 1.U) * 64.U)
+      tlHeader := (tlMsg >> shiftAmount)(63, 0).asTypeOf(new TLMessageHigh)
+      
+      val shiftAmount2 = TOTAL_TILELINK_SIZE.U - ((offset + 2.U) * 64.U)
+      tlHeaderLow := (tlMsg >> shiftAmount2)(63, 0).asTypeOf(new TLMessageLow)
+      
       tlHandlerState := tlGetTlPayload
     }
 
@@ -223,43 +202,19 @@ class TileLinkHandler extends Module {
               rxDataReg := 0.U // AccessAck는 데이터가 없음
             }
             is(D_ACCESSACKDATA_OPCODE) { // AccessAckData
-              switch(tlHeader.size) {
-                is(0.U) {
-                  rxDataReg := extractBits(tlMsg, 
-                                      (TOTAL_TILELINK_SIZE.U-((offset+1.U)*64.U))-1.U, 
-                                      (TOTAL_TILELINK_SIZE.U-((offset+9.U)*64.U)))(8, 0)
-                }
-                is(1.U) {
-                  rxDataReg := extractBits(tlMsg, 
-                                      (TOTAL_TILELINK_SIZE.U-((offset+1.U)*64.U))-1.U, 
-                                      (TOTAL_TILELINK_SIZE.U-((offset+9.U)*64.U)))(15, 0)
-                }
-                is(2.U) {
-                  rxDataReg := extractBits(tlMsg, 
-                                      (TOTAL_TILELINK_SIZE.U-((offset+1.U)*64.U))-1.U, 
-                                      (TOTAL_TILELINK_SIZE.U-((offset+9.U)*64.U)))(31, 0)
-                }
-                is(3.U) {
-                  rxDataReg := extractBits(tlMsg, 
-                                      (TOTAL_TILELINK_SIZE.U-((offset+1.U)*64.U))-1.U, 
-                                      (TOTAL_TILELINK_SIZE.U-((offset+9.U)*64.U)))(63, 0)
-                }
-                is(4.U) {
-                  rxDataReg := extractBits(tlMsg, 
-                                      (TOTAL_TILELINK_SIZE.U-((offset+1.U)*64.U))-1.U, 
-                                      (TOTAL_TILELINK_SIZE.U-((offset+9.U)*64.U)))(127, 0)
-                }
-                is(5.U) {
-                  rxDataReg := extractBits(tlMsg, 
-                                      (TOTAL_TILELINK_SIZE.U-((offset+1.U)*64.U))-1.U, 
-                                      (TOTAL_TILELINK_SIZE.U-((offset+9.U)*64.U)))(255, 0)
-                }
-                is(6.U) {
-                  rxDataReg := extractBits(tlMsg, 
-                                      (TOTAL_TILELINK_SIZE.U-((offset+1.U)*64.U))-1.U, 
-                                      (TOTAL_TILELINK_SIZE.U-((offset+9.U)*64.U)))(511, 0)
-                }
-              }
+              // Use shift for dynamic extraction
+              val shiftAmount = TOTAL_TILELINK_SIZE.U - ((offset + 2.U) * 64.U)
+              val dataChunk = (tlMsg >> shiftAmount)(511, 0)
+              
+              rxDataReg := MuxLookup(tlHeader.size, 0.U)(Seq(
+                0.U -> dataChunk(7, 0),
+                1.U -> dataChunk(15, 0),
+                2.U -> dataChunk(31, 0),
+                3.U -> dataChunk(63, 0),
+                4.U -> dataChunk(127, 0),
+                5.U -> dataChunk(255, 0),
+                6.U -> dataChunk(511, 0)
+              ))
             }
           }
           rxValidReg := true.B

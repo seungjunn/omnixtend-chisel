@@ -32,6 +32,7 @@ class FlowControl extends Module {
   // Accumulated credit registers for each channel (vectorized)
   val accChannels = RegInit(VecInit(Seq.fill(6)(0.U(16.W))))
 
+  // Calculate max credit only once per cycle to save LUTs
   val (maxChannel, maxCredit) = getMaxAccumulatedCreditChannelAndValue()
   io.maxCreditChannel := maxChannel
   io.maxCredit := maxCredit
@@ -41,31 +42,30 @@ class FlowControl extends Module {
     io.credits(i) := channels(i)
   }
 
-  // Register for storing max credit information
-  val debug_maxCreditChannelReg = RegInit(0.U(3.W))
-  val debug_maxCreditReg = RegInit(0.U(16.W))
+  // Debug registers removed to save LUTs and eliminate redundant computation
+  // val debug_maxCreditChannelReg = RegInit(0.U(3.W))
+  // val debug_maxCreditReg = RegInit(0.U(16.W))
 
-  // Update max credit information every cycle
-  val (debugChannel, debugCredit) = getMaxAccumulatedCreditChannelAndValue()
-  debug_maxCreditChannelReg := debugChannel
-  debug_maxCreditReg := debugCredit
+  // Removed redundant call to getMaxAccumulatedCreditChannelAndValue()
+  // val (debugChannel, debugCredit) = getMaxAccumulatedCreditChannelAndValue()
+  // debug_maxCreditChannelReg := debugChannel
+  // debug_maxCreditReg := debugCredit
 
-  // Function to find channel with maximum accumulated credit
-  // Combined function: returns (channel, outgoing_credit) for the channel with max accumulated credit
+  // Optimized function to find channel with maximum accumulated credit
+  // Reduced LUT usage by simplifying logic
   def getMaxAccumulatedCreditChannelAndValue(): (UInt, UInt) = {
-    // Find maximum accumulated credit value
-    val maxCredit = accChannels.reduceTree((a, b) => Mux(a >= b, a, b))
+    // Find maximum accumulated credit value using reduce instead of reduceTree for simplicity
+    val maxCredit = accChannels.reduce((a, b) => Mux(a >= b, a, b))
     
-    // Find channel with maximum credit (lowest index if multiple channels have same max)
-    // When maxCredit is 0, return channel 0. Otherwise find the first channel with maxCredit
+    // Find channel with maximum credit - simplified logic
+    // When maxCredit is 0, return channel 0
     val maxChannel = Mux(maxCredit === 0.U, 0.U, 
-      Mux(accChannels.map(_ === maxCredit).reduce(_ || _), 
-        PriorityEncoder(accChannels.map(_ === maxCredit)), 
-        0.U))
+      PriorityEncoder(VecInit(accChannels.map(_ === maxCredit))))
     
-    // Calculate outgoing credit (largest power of 2 for the max credit)
+    // Calculate outgoing credit (find MSB position for largest power of 2)
+    // Use Log2 which is simpler and uses fewer LUTs than bit reversal
     val outgoingCredit = Mux(maxCredit === 0.U, 0.U, 
-      Mux(maxCredit.orR, PriorityEncoder(maxCredit), 0.U))
+      Mux(maxCredit.orR, Log2(maxCredit), 0.U))
     
     (maxChannel, outgoingCredit)
   }

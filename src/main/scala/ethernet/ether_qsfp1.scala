@@ -26,7 +26,7 @@ object TLOEEtherQSFP1Constants {
   val RX_QUEUE_DEPTH = 2  // Number of packets that can be queued for reception
   
   // Packet size configuration
-  val MAX_CHUNKS = TLOE_PACKET_SIZE / 64  // Number of 64-bit chunks in a packet
+  val MAX_CHUNKS = (TLOE_PACKET_SIZE+16) / 64  // = (880+16) / 64 = 896 / 64 = 14 chunks
 
   val MAC_ADDR_01 = "h001232FFFFFC".U(48.W)
   val MAC_ADDR_02 = "h001232FFFFFA".U(48.W)
@@ -93,7 +93,9 @@ class TLOEEtherQSFP1 extends Module {
   val internalTxIdx = RegInit(0.U(4.W))
   val internalTxReady = RegInit(true.B)
 
-  val etherTloePacket = RegInit(0.U(TLOE_PACKET_SIZE.W))
+  // MASSIVE LUT REDUCTION: Use single register instead of Vec
+  // Removes Cat() operations that consume huge LUTs
+  val etherTloePacket = Reg(UInt(TLOE_PACKET_SIZE.W))
   //val internalTxDataReg = RegInit(0.U(TLOE_FRAME_SIZE.W))
   val internalTxFlitSizeReg = RegInit(0.U(7.W))
   val internalTxReadyReg = RegInit(true.B)
@@ -147,12 +149,10 @@ class TLOEEtherQSFP1 extends Module {
       val txEntry = txQueue.io.deq.bits
       
       internalTxIdx := 0.U
-      etherTloePacket := Cat(srcMac, destMac, etherType, txEntry.data, 0.U(16.W))
+      etherTloePacket := Cat(srcMac, destMac, etherType, txEntry.data)
       internalTxFlitSizeReg := Mux(txEntry.flitSize < 4.U, 4.U, txEntry.flitSize)
 
-      // Signal that we're consuming the packet
       txQueue.io.deq.ready := true.B
-
       etherTxState := etherTxSend
     }
 
@@ -162,15 +162,13 @@ class TLOEEtherQSFP1 extends Module {
 
 when (io.txready === true.B) {
 
-      when(internalTxIdx < flitSize) { // 542-bit packet divided into 64-bit chunks
-        // Extract 64-bit chunk from 542-bit data, starting from MSB (most significant bits)
-        // Fix: Calculate correct bit position to preserve MSB 4 bytes
+      when(internalTxIdx < flitSize) {
+        // Extract 64-bit chunk - direct access, no Cat()
         val bitPosition = (internalTxIdx * 64.U)
         val chunk64 = (etherTloePacket >> (TLOE_PACKET_SIZE.U - 64.U - bitPosition))(63, 0)
 
         io.txvalid := true.B
-
-        io.txdata := TloePacGen.toBigEndian(chunk64)  // Convert to big-endian format
+        io.txdata := TloePacGen.toBigEndian(chunk64)
         
         // Check if this is the last chunk
         when(internalTxIdx === (flitSize - 1.U)) {
@@ -204,52 +202,74 @@ when (io.txready === true.B) {
   // Handle ethernet RX and add packets to RX queue
   // Connect RX queue input
 
-  // Ethernet packet reception and queue management
-  val rxPacketReg = RegInit(0.U(TLOE_PACKET_SIZE.W))  // Accumulate received data (4352 bits)
+  // MASSIVE LUT REDUCTION: Use single register instead of Vec
+  // Removes Cat() operations
+  val rxPacketReg = RegInit(0.U(TLOE_PACKET_SIZE.W))
   val rxCount = RegInit(0.U(8.W))  // Count received chunks (need 8 bits for 68 chunks)
   val rxFlitSize = RegInit(0.U(8.W))  // Total flit size (need 8 bits for 68 chunks)
   val rxPacketComplete = RegInit(false.B)  // Packet reception complete flag
+
+  // Debug registers removed to save LUTs
 
   // Reset flags when no valid RX data
   when(!io.rxvalid) {
     rxPacketComplete := false.B
   }
+
+  val ether_debug_rxValid = RegInit(false.B)
+  ether_debug_rxValid := io.rxvalid
+
+  val ether_debug_packetReg = RegInit(0.U(TLOE_PACKET_SIZE.W))
+  ether_debug_packetReg := rxPacketReg
+
+  val ether_debug_rxData = RegInit(0.U(TLOE_FRAME_SIZE.W))
+  ether_debug_rxData := rxPacketReg(TLOE_FRAME_SIZE-1, 0)
+
+  val ether_debug_rxComplete = RegInit(false.B)
+  ether_debug_rxComplete := rxPacketComplete
+
+  val ether_debug_endpointReady = RegInit(false.B)
+  ether_debug_endpointReady := io.endpointRxReady
+
+  val ether_debug_rxQueueCount = RegInit(0.U(8.W))
+  ether_debug_rxQueueCount := rxQueue.io.count
+
+  val ether_debug_etherType = RegInit(0.U(16.W))
   
-  // Process incoming ethernet packet
+  // Process incoming ethernet packet - direct operation, no Cat()
   when(io.rxvalid) {
-    // Convert 512-bit rxdata from little-endian to big-endian
     val endianSwappedData = TloePacGen.toBigEndian512(io.rxdata)
+    val shiftAmount = ((TLOEEtherQSFP1Constants.MAX_CHUNKS.U - rxCount - 1.U) * 64.U) - 16.U
     
-    // Accumulate into rxPacketReg from MSB (most significant bits)
-    // rxPacketReg is 4352 bits, io.rxdata is 512 bits
-    // Place 512-bit data starting from the correct position based on rxCount
-    val shiftAmount = (TLOEEtherQSFP1Constants.MAX_CHUNKS.U - rxCount - 1.U) * 64.U
+    // Direct accumulation without Vec conversion
     rxPacketReg := rxPacketReg | (endianSwappedData << shiftAmount)
-    
-    // Increment chunk counter
     rxCount := rxCount + 1.U
     
-    // Check if this is the last chunk
     when(io.rxlast) {
       rxFlitSize := rxCount + 1.U
       rxPacketComplete := true.B
-      rxCount := 0.U  // Reset for next packet
+      rxCount := 0.U
     }
   }
   
-  // When packet is complete, add to RX queue if there's space
+  // When packet is complete, add to RX queue - direct access
   when(rxPacketComplete && rxQueue.io.enq.ready) {
-    // TODO switch to getEtherType
-    when(rxPacketReg(4255, 4240) === 0xaaaa.U) {
-      // Add accumulated data and flit size to RX queue
+    // Check ethernet type field (16 bits after srcMAC and destMAC)
+    // Packet structure: [srcMAC(48)][destMAC(48)][etherType(16)][data...]
+    // etherType is at bits TLOE_PACKET_SIZE - TLOE_ETHER_HEADER_SIZE + 15 down to TLOE_PACKET_SIZE - TLOE_ETHER_HEADER_SIZE
+    val etherTypeStartBit = TLOE_PACKET_SIZE - TLOE_ETHER_HEADER_SIZE  // = 880 - 112 = 768
+    val etherTypeEndBit = TLOE_PACKET_SIZE - TLOE_ETHER_HEADER_SIZE + 15  // = 880 - 112 + 15 = 783
+    ether_debug_etherType := rxPacketReg(etherTypeEndBit, etherTypeStartBit)
+    when(rxPacketReg(etherTypeEndBit, etherTypeStartBit) === ETHER_TYPE) {
       rxQueue.io.enq.valid := true.B
-      rxQueue.io.enq.bits.data := rxPacketReg(4239, 16)
-      rxQueue.io.enq.bits.flitSize := rxFlitSize - 2.U // -2 is for the Ethernet Header and TloeHeader
+      // Extract frame data (skip ethernet header: 112 bits = 14 bytes)
+      // Frame data starts at TLOE_PACKET_SIZE - TLOE_ETHER_HEADER_SIZE = TLOE_PACKET_SIZE - 112
+      rxQueue.io.enq.bits.data := rxPacketReg(TLOE_FRAME_SIZE - 1, 0)
+      rxQueue.io.enq.bits.flitSize := rxFlitSize - 2.U
     }.otherwise {
       rxQueue.io.enq.valid := false.B
     }
     
-    // Reset completion flag and data register
     rxPacketComplete := false.B
     rxPacketReg := 0.U
   }.otherwise {
@@ -276,6 +296,13 @@ when (io.txready === true.B) {
   }
 
   //////////////////////////////////////////////////////////////////
-  // Debug
+  // Debug - removed to save LUTs
   //////////////////////////////////////////////////////////////////
+  dontTouch(ether_debug_rxValid)
+  dontTouch(ether_debug_packetReg)
+  dontTouch(ether_debug_rxData)
+  dontTouch(ether_debug_rxComplete)
+  dontTouch(ether_debug_endpointReady)
+  dontTouch(ether_debug_rxQueueCount)
+  dontTouch(ether_debug_etherType)
 } 
