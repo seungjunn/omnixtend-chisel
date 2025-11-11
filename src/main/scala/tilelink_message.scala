@@ -5,13 +5,34 @@ import chisel3.util._
 
 import OmniXtendConstants._
 
+// ========================================================================
+// TileLink Message Flits Utility Object
+// ========================================================================
+/**
+ * TlMsgFlits object provides utility functions for calculating TileLink message sizes.
+ * 
+ * This object helps determine:
+ * - Header sizes for different TileLink channels and opcodes
+ * - Data sizes based on transfer size
+ * - Total flit counts for complete messages
+ * 
+ * These functions are used for flow control and packet construction.
+ */
 object TlMsgFlits {
+  // ========================================================================
+  // Helper Functions
+  // ========================================================================
   // Helper function to convert size to flits
+  // Converts byte size to number of 64-bit flits (rounds up)
   def convertSizeToFlits(size: UInt): UInt = {
-    (size + 7.U) / 8.U  // (size + 7) / 8
+    (size + 7.U) / 8.U  // (size + 7) / 8 - rounds up to nearest flit
   }
 
+  // ========================================================================
+  // Header Size Calculation
+  // ========================================================================
   // Calculate header size in bytes
+  // Returns the header size in bytes based on channel and opcode
   def getHeaderSize(chan: UInt, opcode: UInt): UInt = {
     val headerSize = Wire(UInt(4.W))
     headerSize := 0.U  // Default value
@@ -39,10 +60,14 @@ object TlMsgFlits {
       }
     }
     
-    (1.U << headerSize)
+    (1.U << headerSize)  // Convert log2 size to actual bytes
   }
 
+  // ========================================================================
+  // Data Size Calculation
+  // ========================================================================
   // Calculate data size in bytes
+  // Returns the data payload size in bytes based on channel, opcode, and transfer size
   def getDataSize(chan: UInt, opcode: UInt, size: UInt): UInt = {
     val dataSize = Wire(UInt(4.W))
     dataSize := 0.U  // Default value
@@ -73,10 +98,14 @@ object TlMsgFlits {
       }
     }
     
-    Mux(dataSize === 0.U, 0.U, 1.U << dataSize)
+    Mux(dataSize === 0.U, 0.U, 1.U << dataSize)  // Convert log2 size to actual bytes
   }
 
+  // ========================================================================
+  // Total Flits Calculation
+  // ========================================================================
   // Calculate total flits for a TileLink message
+  // Returns the total number of 64-bit flits needed for a complete TileLink message
   def getFlitsCnt(chan: UInt, opcode: UInt, size: UInt): UInt = {
     val headerSize = getHeaderSize(chan, opcode)
     val dataSize = getDataSize(chan, opcode, size)

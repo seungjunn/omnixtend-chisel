@@ -6,37 +6,75 @@ import chisel3.dontTouch
 
 import OmniXtendConstants._
 
+// ========================================================================
+// Credit Bundle Definition
+// ========================================================================
+/**
+ * CreditBundle defines the interface for credit operations
+ * Used for both increment and decrement credit operations
+ */
 class CreditBundle extends Bundle {
-  val valid = Input(Bool())
-  val channel = Input(UInt(3.W))
-  val credit = Input(UInt(16.W))
+  val valid = Input(Bool())      // Valid signal for credit operation
+  val channel = Input(UInt(3.W))  // Channel ID (0-5)
+  val credit = Input(UInt(16.W))  // Credit amount
 }
 
+// ========================================================================
+// FlowControl Module
+// ========================================================================
+/**
+ * FlowControl Module
+ * 
+ * This module manages credit-based flow control for all TileLink channels.
+ * It maintains:
+ * - Regular credits for each channel (for flow control)
+ * - Accumulated credits for each channel (for credit reporting)
+ * 
+ * Key features:
+ * - Supports simultaneous increment and decrement operations
+ * - Finds channel with maximum accumulated credit
+ * - Optimized for LUT reduction
+ */
 class FlowControl extends Module {
   val io = IO(new Bundle {
+    // ========================================================================
+    // Credit Management Interfaces
+    // ========================================================================
     // Credit management signals
-    val incCredit = new CreditBundle
-    val decCredit = new CreditBundle
+    val incCredit = new CreditBundle    // Increment regular credit
+    val decCredit = new CreditBundle    // Decrement regular credit
 
-    val incAccCredit = new CreditBundle
-    val decAccCredit = new CreditBundle
+    val incAccCredit = new CreditBundle // Increment accumulated credit
+    val decAccCredit = new CreditBundle // Decrement accumulated credit
 
+    // ========================================================================
+    // Credit Status Outputs
+    // ========================================================================
     val credits = Output(Vec(6, UInt(16.W)))  // Current credits for each channel
-    val maxCreditChannel = Output(UInt(3.W))  // Channel with maximum credit
-    val maxCredit = Output(UInt(16.W))  // Added for the new maxCredit signal
+    val maxCreditChannel = Output(UInt(3.W))  // Channel with maximum accumulated credit
+    val maxCredit = Output(UInt(16.W))        // Maximum accumulated credit value (power of 2)
   })
 
+  // ========================================================================
+  // Credit Registers
+  // ========================================================================
   // Credit registers for each channel (vectorized)
   val channels = RegInit(VecInit(Seq.fill(6)(INIT_CREDIT.U(16.W))))
   
   // Accumulated credit registers for each channel (vectorized)
   val accChannels = RegInit(VecInit(Seq.fill(6)(0.U(16.W))))
 
+  // ========================================================================
+  // Maximum Credit Calculation
+  // ========================================================================
   // Calculate max credit only once per cycle to save LUTs
   val (maxChannel, maxCredit) = getMaxAccumulatedCreditChannelAndValue()
   io.maxCreditChannel := maxChannel
   io.maxCredit := maxCredit
 
+  // ========================================================================
+  // Credit Output Connection
+  // ========================================================================
   // Connect credit values to IO
   for (i <- 0 until 6) {
     io.credits(i) := channels(i)
@@ -51,6 +89,9 @@ class FlowControl extends Module {
   // debug_maxCreditChannelReg := debugChannel
   // debug_maxCreditReg := debugCredit
 
+  // ========================================================================
+  // Helper Functions
+  // ========================================================================
   // Optimized function to find channel with maximum accumulated credit
   // Reduced LUT usage by simplifying logic
   def getMaxAccumulatedCreditChannelAndValue(): (UInt, UInt) = {
@@ -70,6 +111,10 @@ class FlowControl extends Module {
     (maxChannel, outgoingCredit)
   }
 
+  // ========================================================================
+  // Regular Credit Update Logic
+  // ========================================================================
+  // Handle simultaneous increment and decrement
   when(io.incCredit.valid && io.decCredit.valid) {
     val creditIncAmount = io.incCredit.credit
     val creditDecAmount = io.decCredit.credit
@@ -99,15 +144,21 @@ class FlowControl extends Module {
     }
 
   }.elsewhen(io.incCredit.valid) {
+    // Increment only
     val creditAmount = io.incCredit.credit
     // Update regular credit
     channels(io.incCredit.channel) := channels(io.incCredit.channel) + creditAmount
   }.elsewhen(io.decCredit.valid) {
+    // Decrement only
     val creditAmount = io.decCredit.credit
     // Update regular credit
     channels(io.decCredit.channel) := channels(io.decCredit.channel) - creditAmount 
   }
 
+  // ========================================================================
+  // Accumulated Credit Update Logic
+  // ========================================================================
+  // Handle simultaneous increment and decrement for accumulated credits
   when(io.incAccCredit.valid && io.decAccCredit.valid) {
     val creditIncAmount = io.incAccCredit.credit
     val creditDecAmount = io.decAccCredit.credit
@@ -135,11 +186,13 @@ class FlowControl extends Module {
     }
 
   }.elsewhen(io.incAccCredit.valid) {
+    // Increment accumulated credit only
     val creditAmount = io.incAccCredit.credit
 
     // Update accumulated credit
     accChannels(io.incAccCredit.channel) := accChannels(io.incAccCredit.channel) + creditAmount
   }.elsewhen(io.decAccCredit.valid) {
+    // Decrement accumulated credit only
     val creditAmount = io.decAccCredit.credit
 
     // Update accumulated credit

@@ -5,11 +5,15 @@ import chisel3.util._
 
 import OmniXtendConstants._
 
+// ========================================================================
+// Bundle Type Definitions
+// ========================================================================
 /**
  * EthernetHeader class defines the structure of an Ethernet header.
+ * Total: 112 bits (14 bytes)
  */
 class EthernetHeader extends Bundle {
-// val preamble  = UInt(64.W)    // 8-byte Preamble/SFD
+// val preamble  = UInt(64.W)    // 8-byte Preamble/SFD (unused)
   val destMAC   = UInt(48.W)    // 6-byte Destination MAC Address
   val srcMAC    = UInt(48.W)    // 6-byte Source MAC Address
   val etherType = UInt(16.W)    // 2-byte EtherType field
@@ -18,58 +22,79 @@ class EthernetHeader extends Bundle {
 /**
  * OmniXtendHeader class defines the structure of an OmniXtend header.
  * 64 Bits (8 Bytes)
+ * 
+ * This header contains TLOE protocol information including sequence numbers,
+ * acknowledgment flags, channel information, and credit values.
  */
 class tloeHeader extends Bundle {
   val vc        = UInt(3.W)     // Virtual Channel
-  val msgType   = UInt(4.W)     // Reserved
-  val res1      = UInt(3.W)     // Reserved
-  val seqNum    = UInt(22.W)    // Sequence Number
+  val msgType   = UInt(4.W)     // Message Type (Normal, ACKOnly, Open, Close)
+  val res1      = UInt(3.W)     // Reserved field 1
+  val seqNum    = UInt(22.W)    // Sequence Number (22 bits, max 0x3FFFFF)
   val seqNumAck = UInt(22.W)    // Sequence Number Acknowledgment
-  val ack       = UInt(1.W)     // Acknowledgment
-  val res2      = UInt(1.W)     // Reserved
-  val chan      = UInt(3.W)     // Channel
-  val credit    = UInt(5.W)     // Credit
+  val ack       = UInt(1.W)     // Acknowledgment flag (ACK/NAK)
+  val res2      = UInt(1.W)     // Reserved field 2
+  val chan      = UInt(3.W)     // Channel ID (0-5)
+  val credit    = UInt(5.W)     // Credit value
 }
 
 /**
- * TileLinkMessage class defines the structure of a TileLink message.
+ * TileLinkMessageHigh class defines the high 64 bits of a TileLink message.
  * 64 Bits (8 Bytes)
+ * 
+ * Contains TileLink protocol fields: channel, opcode, param, size, source, etc.
  */
 class TLMessageHigh extends Bundle {
-  val res1      = UInt(1.W)     // Reserved
-  val chan      = UInt(3.W)     // Channel
-  val opcode    = UInt(3.W)     // Opcode
-  val res2      = UInt(1.W)     // Reserved
-  val param     = UInt(4.W)     // Parameter
-  val size      = UInt(4.W)     // Size
-  val domain    = UInt(8.W)     // Domain
-  val err       = UInt(2.W)     // Error
-  val res3      = UInt(12.W)    // Reserved
-  val source    = UInt(26.W)    // Source
+  val res1      = UInt(1.W)     // Reserved field 1
+  val chan      = UInt(3.W)     // Channel ID
+  val opcode    = UInt(3.W)     // Operation code
+  val res2      = UInt(1.W)     // Reserved field 2
+  val param     = UInt(4.W)     // Parameter field
+  val size      = UInt(4.W)     // Transfer size (log2 of bytes)
+  val domain    = UInt(8.W)     // Domain field
+  val err       = UInt(2.W)     // Error field
+  val res3      = UInt(12.W)    // Reserved field 3
+  val source    = UInt(26.W)    // Source ID
 }
 
 /**
- * TileLinkMessage class defines the structure of a TileLink message.
+ * TileLinkMessageLow class defines the low 64 bits of a TileLink message.
+ * 64 Bits (8 Bytes)
+ * 
+ * Contains the address field for TileLink transactions.
  */
 class TLMessageLow extends Bundle {
-  val addr      = UInt(64.W)    // Address
+  val addr      = UInt(64.W)    // Address (64 bits)
 }
 
-class tloeFrame extends Bundle {
-  val tloeHeader  = new tloeHeader
-  val tlMsgHigh   = new TLMessageHigh
-  val tlMsgLow    = new TLMessageLow
-}
 /**
- * TloePacket class defines the structure of a TLoE packet.
+ * tloeFrame class defines the structure of a TLOE frame.
+ * 
+ * Contains TLOE header and TileLink message (high and low parts).
+ * Total: 192 bits (24 bytes) = 64 (header) + 64 (TL high) + 64 (TL low)
+ */
+class tloeFrame extends Bundle {
+  val tloeHeader  = new tloeHeader      // TLOE protocol header
+  val tlMsgHigh   = new TLMessageHigh   // TileLink message high part
+  val tlMsgLow    = new TLMessageLow    // TileLink message low part
+}
+
+/**
+ * TloePacket class defines the structure of a complete TLoE packet.
+ * 
+ * Contains Ethernet header + TLOE frame.
+ * Used for complete packet representation including Ethernet encapsulation.
  */
 class TloePacket extends Bundle {
-  val ethHeader   = new EthernetHeader
-  val tloeHeader  = new tloeHeader
-  val tlMsgHigh   = new TLMessageHigh
-  val tlMsgLow    = new TLMessageLow
+  val ethHeader   = new EthernetHeader  // Ethernet header
+  val tloeHeader  = new tloeHeader      // TLOE header
+  val tlMsgHigh   = new TLMessageHigh   // TileLink message high part
+  val tlMsgLow    = new TLMessageLow    // TileLink message low part
 }
 
+// ========================================================================
+// Message Type Constants
+// ========================================================================
 object MsgType {
   val NORMAL     = 0.U(4.W)     // Normal message
   val ACKONLY    = 1.U(4.W)     // Acknowledgment only message

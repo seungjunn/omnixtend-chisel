@@ -16,6 +16,17 @@ import freechips.rocketchip.util.UIntIsOneOf
 
 import OmniXtendConstants._
 
+// ========================================================================
+// OmniXtend Configuration Parameters
+// ========================================================================
+/**
+ * Configuration parameters for OmniXtend module
+ * 
+ * @param address Base address for the OmniXtend device
+ * @param width Data width (unused in current implementation)
+ * @param useAXI4 Whether to use AXI4 interface (unused)
+ * @param useBlackBox Whether to use black box implementation (unused)
+ */
 case class OXParams(
   address: BigInt = 0x1000,
   width: Int = 32,
@@ -23,36 +34,64 @@ case class OXParams(
   useBlackBox: Boolean = true
 )
 
+/**
+ * Configuration key for OmniXtend parameters
+ * Used in Rocket Chip configuration system
+ */
 case object OXKey extends Field[Option[OXParams]](None)
 
-// Definition of OmniXtend Bundle
+// ========================================================================
+// OmniXtend Bundle Definition
+// ========================================================================
+/**
+ * Definition of OmniXtend Bundle
+ * 
+ * This bundle defines the interface between OmniXtend and external Ethernet IP.
+ * It includes TX/RX data paths and control signals.
+ */
 class OmniXtendBundle extends Bundle {
-  val ready       = Output(Bool())  // signals if the transaction can proceed
+  // ========================================================================
+  // Status Signal
+  // ========================================================================
+  val ready       = Output(Bool())  // Signals if the transaction can proceed
 
-  // Connected to Ethernet IP
-  val txdata      = Output(UInt(512.W))
-  val txvalid     = Output(Bool())
-  val txlast      = Output(Bool())
-  val txkeep      = Output(UInt(8.W))
-  val txready     = Input(Bool())
+  // ========================================================================
+  // Ethernet TX Interface - To Ethernet IP
+  // ========================================================================
+  val txdata      = Output(UInt(512.W))   // 512-bit TX data
+  val txvalid     = Output(Bool())        // TX data valid
+  val txlast      = Output(Bool())        // Last word in packet
+  val txkeep      = Output(UInt(8.W))     // Byte enable mask
+  val txready     = Input(Bool())         // TX ready from Ethernet IP
 
-  val rxdata      = Input(UInt(512.W))
-  val rxvalid     = Input(Bool())
-  val rxlast      = Input(Bool())
-//  val rxkeep      = Input(UInt(64.W))
+  // ========================================================================
+  // Ethernet RX Interface - From Ethernet IP
+  // ========================================================================
+  val rxdata      = Input(UInt(512.W))    // 512-bit RX data
+  val rxvalid     = Input(Bool())          // RX data valid
+  val rxlast      = Input(Bool())          // Last word in received packet
+//  val rxkeep      = Input(UInt(64.W))     // Unused
 
-  val ox_open     = Input(Bool())
-  val ox_close    = Input(Bool())
-  val debug1      = Input(Bool())
-  val debug2      = Input(Bool())
+  // ========================================================================
+  // Control Signals
+  // ========================================================================
+  val ox_open     = Input(Bool())         // Open connection
+  val ox_close    = Input(Bool())         // Close connection
+  val debug1      = Input(Bool())         // Debug mode 1 (read requests)
+  val debug2      = Input(Bool())         // Debug mode 2 (write requests)
 }
 
 /**
  * OmniXtendNode is a LazyModule that defines a TileLink manager node
  * which supports OmniXtend protocol operations. It handles Get and PutFullData
  * requests by interfacing with a Transceiver module.
+ * 
+ * This module acts as a bridge between TileLink protocol and OmniXtend over Ethernet.
  */
 class OmniXtendNode(implicit p: Parameters) extends LazyModule {
+  // ========================================================================
+  // TileLink Node Configuration
+  // ========================================================================
   val beatBytes = 64 // The size of each data beat in bytes
   val node = TLManagerNode(Seq(TLSlavePortParameters.v1(Seq(TLSlaveParameters.v1(
     address            = Seq(AddressSet(0x500000000L, 0x01FFFFFFL)), // Address range this node responds to
@@ -70,21 +109,33 @@ class OmniXtendNode(implicit p: Parameters) extends LazyModule {
 
   lazy val module = new Impl
   class Impl extends LazyModuleImp(this) {
+    // ========================================================================
+    // IO and Node Connections
+    // ========================================================================
     val io  = IO(new OmniXtendBundle) // Input/Output bundle
     val (in, edge) = node.in(0) // Getting the input node and its edge
 
+    // ========================================================================
+    // Internal Registers
+    // ========================================================================
     // Registers for storing the validity of Get and PutFullData operations
     val aValidReg   = RegInit(false.B) // Register to store the validity of any operation
 
-    val TLOEEndpoint = Module(new TLOEEndpoint)
-    val tilelinkHandler = Module(new TileLinkHandler)
+    // ========================================================================
+    // Module Instantiations
+    // ========================================================================
+    val TLOEEndpoint = Module(new TLOEEndpoint)      // TLOE endpoint module
+    val tilelinkHandler = Module(new TileLinkHandler) // TileLink handler module
 
-    val oxAValidReg = RegInit(false.B)
-    val oxDValidReg = RegInit(false.B)
+    val oxAValidReg = RegInit(false.B)  // TileLink A channel valid register
+    val oxDValidReg = RegInit(false.B)  // TileLink D channel valid register
 
     oxAValidReg := in.a.valid
     oxDValidReg := in.d.valid
 
+    // ========================================================================
+    // Default TLOE Endpoint Inputs
+    // ========================================================================
     TLOEEndpoint.io.tlChan    := 0.U
     TLOEEndpoint.io.tlAddr    := 0.U
     TLOEEndpoint.io.tlData    := 0.U
@@ -95,28 +146,39 @@ class OmniXtendNode(implicit p: Parameters) extends LazyModule {
     TLOEEndpoint.io.tlSource  := 0.U
     TLOEEndpoint.io.tlParam   := 0.U
 
+    // ========================================================================
+    // Module Interconnections
+    // ========================================================================
+    // Flow control credit signals from TileLink handler to TLOE endpoint
     TLOEEndpoint.io.incAccCreditValid := tilelinkHandler.io.incAccCreditValid
     TLOEEndpoint.io.incAccCreditChannel := tilelinkHandler.io.incAccCreditChannel
     TLOEEndpoint.io.incAccCreditAmount := tilelinkHandler.io.incAccCreditAmount
 
+    // TileLink message signals from TLOE endpoint to TileLink handler
     tilelinkHandler.io.tlMsg              := TLOEEndpoint.io.tlMsg
     tilelinkHandler.io.tlMsgMask          := TLOEEndpoint.io.tlMsgMask
     tilelinkHandler.io.doTilelinkHandler  := TLOEEndpoint.io.doTilelinkHandler
 
-    // Connect TLOEEndpoint to external ethernet interface
+    // ========================================================================
+    // Ethernet Interface Connections
+    // ========================================================================
+    // Connect TLOEEndpoint to external ethernet interface (TX)
     io.txdata   := TLOEEndpoint.io.txdata
     io.txvalid  := TLOEEndpoint.io.txvalid
     io.txlast   := TLOEEndpoint.io.txlast
     io.txkeep   := TLOEEndpoint.io.txkeep
 
-    // Connect external ethernet signals to TLOEEndpoint
+    // Connect external ethernet signals to TLOEEndpoint (RX and control)
     TLOEEndpoint.io.txready  := io.txready
 
     TLOEEndpoint.io.rxdata   := io.rxdata
     TLOEEndpoint.io.rxvalid  := io.rxvalid
     TLOEEndpoint.io.rxlast   := io.rxlast
 
-    // VIO
+    // ========================================================================
+    // Control Signal Connections
+    // ========================================================================
+    // VIO (Virtual I/O) control signals
     TLOEEndpoint.io.ox_open   := io.ox_open
     TLOEEndpoint.io.ox_close  := io.ox_close
     TLOEEndpoint.io.ox_debug1 := io.debug1
@@ -133,6 +195,9 @@ class OmniXtendNode(implicit p: Parameters) extends LazyModule {
     val debug_oxMACReg = RegInit(0.U(64.W))
     */
 
+    // ========================================================================
+    // TileLink A Channel Processing
+    // ========================================================================
     // When the input channel 'a' is ready and valid
     when (in.a.fire) {
       // Transmit the address, data, and opcode from the input channel
@@ -158,6 +223,9 @@ class OmniXtendNode(implicit p: Parameters) extends LazyModule {
         aValidReg := true.B
     }
 
+    // ========================================================================
+    // TileLink D Channel Processing
+    // ========================================================================
     // Default values for the response channel 'd'
     in.d.valid        := false.B
     in.d.bits.opcode  := 0.U
@@ -188,7 +256,9 @@ class OmniXtendNode(implicit p: Parameters) extends LazyModule {
     debug_oxDValid := in.d.valid
     */
 
-    when (tilelinkHandler.io.ep_rxValid) {                 // RX valid signal received from Ethernet IP
+    // When TileLink handler has valid RX data
+    when (tilelinkHandler.io.ep_rxValid) {
+      // RX valid signal received from Ethernet IP
       in.d.valid        := true.B                          // Mark the response as valid
       in.d.bits         := edge.AccessAck(in.a.bits)       // Generate an AccessAck response
       in.d.bits.opcode  := tilelinkHandler.io.ep_rxOpcode  // Set the opcode from the register
@@ -199,20 +269,26 @@ class OmniXtendNode(implicit p: Parameters) extends LazyModule {
       in.d.bits.denied  := false.B                         // Mark as not denied
 
       // Optimized with Mux chain instead of switch
+      // Handle data response based on opcode and size
       when (tilelinkHandler.io.ep_rxOpcode === D_ACCESSACKDATA_OPCODE) {
+        // AccessAckData - extract data based on size
         in.d.bits.data := MuxCase(tilelinkHandler.io.ep_rxData, Seq(
-          (tilelinkHandler.io.ep_rxSize === 1.U) -> tilelinkHandler.io.ep_rxData(15, 0),
-          (tilelinkHandler.io.ep_rxSize === 2.U) -> tilelinkHandler.io.ep_rxData(31, 0),
-          (tilelinkHandler.io.ep_rxSize === 3.U) -> tilelinkHandler.io.ep_rxData(63, 0),
-          (tilelinkHandler.io.ep_rxSize === 4.U) -> tilelinkHandler.io.ep_rxData(127, 0),
-          (tilelinkHandler.io.ep_rxSize === 5.U) -> tilelinkHandler.io.ep_rxData(255, 0)
+          (tilelinkHandler.io.ep_rxSize === 1.U) -> tilelinkHandler.io.ep_rxData(15, 0),   // 2 bytes
+          (tilelinkHandler.io.ep_rxSize === 2.U) -> tilelinkHandler.io.ep_rxData(31, 0),   // 4 bytes
+          (tilelinkHandler.io.ep_rxSize === 3.U) -> tilelinkHandler.io.ep_rxData(63, 0),   // 8 bytes
+          (tilelinkHandler.io.ep_rxSize === 4.U) -> tilelinkHandler.io.ep_rxData(127, 0), // 16 bytes
+          (tilelinkHandler.io.ep_rxSize === 5.U) -> tilelinkHandler.io.ep_rxData(255, 0)   // 32 bytes
         ))
         in.d.bits.corrupt := false.B // Mark as not corrupt
       }.elsewhen (tilelinkHandler.io.ep_rxOpcode === D_ACCESSACK_OPCODE) {
+        // AccessAck - no data
         in.d.bits.data    := 0.U
       }
     }
 
+    // ========================================================================
+    // Ready Signal Generation
+    // ========================================================================
     // Ready conditions for the input channel 'a' and response channel 'd'
     in.a.ready := in.a.valid || aValidReg
     in.d.ready := in.a.valid || aValidReg
@@ -222,6 +298,15 @@ class OmniXtendNode(implicit p: Parameters) extends LazyModule {
   }
 }
 
+// ========================================================================
+// OmniXtend Trait for Rocket Chip Integration
+// ========================================================================
+/**
+ * Trait to add OmniXtend to a Rocket Chip subsystem
+ * 
+ * This trait instantiates the OmniXtend node and connects it to the memory bus (MBUS).
+ * It adds necessary adapters (TLBuffer, TLWidthWidget) for proper integration.
+ */
 trait OmniXtend { this: BaseSubsystem =>
   private val portName = "OmniXtend"
   implicit val p: Parameters
@@ -230,13 +315,23 @@ trait OmniXtend { this: BaseSubsystem =>
   
   private val mbus = locateTLBusWrapper(MBUS)
 
+  // Connect OmniXtend node to memory bus with adapters
   mbus.coupleTo(portName) { (ox.node
-    :*= TLBuffer()
-    :*= TLWidthWidget(mbus.beatBytes)
+    :*= TLBuffer()                    // Add buffer for flow control
+    :*= TLWidthWidget(mbus.beatBytes) // Width adapter
     :*= _)
   }
 }
 
+// ========================================================================
+// Configuration Class
+// ========================================================================
+/**
+ * Configuration class to enable OmniXtend in Rocket Chip
+ * 
+ * @param useAXI4 Whether to use AXI4 interface (unused)
+ * @param useBlackBox Whether to use black box implementation (unused)
+ */
 class WithOX(useAXI4: Boolean = false, useBlackBox: Boolean = false) extends Config((site, here, up) => {
   case OXKey => Some(OXParams(useAXI4 = useAXI4, useBlackBox = useBlackBox))
 })

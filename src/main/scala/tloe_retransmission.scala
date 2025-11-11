@@ -6,57 +6,120 @@ import chisel3.util._
 import OmniXtendConstants._
 import TloePacGen._
 
+// ========================================================================
+// Retransmit Buffer Element Bundle
+// ========================================================================
+/**
+ * RetransmitBufferElement defines the structure of an entry in the retransmission buffer.
+ * 
+ * Each entry contains:
+ * - The TLOE frame to be retransmitted
+ * - Frame size in flits
+ * - State information
+ * - Timestamp when the frame was sent
+ */
 class RetransmitBufferElement extends Bundle {
   //val tloeFrame = new TloePacket
-  val tloeFrame = UInt(TLOE_FRAME_SIZE.W)
-  val tloeFrameSize = UInt(5.W)
-  val state = UInt(2.W)
-  val sendTime = UInt(64.W)
+  val tloeFrame = UInt(TLOE_FRAME_SIZE.W)  // TLOE frame data (768 bits)
+  val tloeFrameSize = UInt(5.W)            // Frame size in flits
+  val state = UInt(2.W)                     // State information
+  val sendTime = UInt(64.W)                // Timestamp when frame was sent
 }
 
+// ========================================================================
+// Retransmission Module
+// ========================================================================
+/**
+ * Retransmission Module
+ * 
+ * This module handles packet retransmission for reliable delivery:
+ * - Buffers transmitted packets for potential retransmission
+ * - Retransmits packets on NAK or timeout
+ * - Manages sliding window for acknowledged packets
+ * - Tracks send times for timeout detection
+ * 
+ * Key features:
+ * - Queue-based buffer for retransmission candidates
+ * - Timeout-based retransmission
+ * - Sequence number-based window sliding
+ * - State machine for retransmission flow
+ */
 class Retransmission extends Module {
   val io = IO(new Bundle {
+    // ========================================================================
+    // Write Interface - From Transmitter
+    // ========================================================================
     // Write interface - Transceiver writes packets to retransmit buffer
-    val write = Input(new RetransmitBufferElement)
-    val writeValid = Input(Bool())
-    val writeReady = Output(Bool())  // Added writeReady output
+    val write = Input(new RetransmitBufferElement)  // Packet to buffer
+    val writeValid = Input(Bool())                  // Write valid signal
+    val writeReady = Output(Bool())                 // Write ready signal (backpressure)
     
+    // ========================================================================
+    // Read Interface (Unused)
+    // ========================================================================
     // Read interface - Retransmission reads packets from buffer
-    val read = Input(UInt(TLOE_FRAME_SIZE.W))
+    val read = Input(UInt(TLOE_FRAME_SIZE.W))  // Unused read interface
     
+    // ========================================================================
+    // Control Interface
+    // ========================================================================
     // Control interface
-    val clear = Input(Bool())
-    val isEmpty = Output(Bool())
-    val isFull = Output(Bool())
-    val count = Output(UInt(5.W))
+    val clear = Input(Bool())      // Clear buffer
+    val isEmpty = Output(Bool())    // Buffer empty flag
+    val isFull = Output(Bool())     // Buffer full flag
+    val count = Output(UInt(5.W))   // Current buffer count
     
+    // ========================================================================
+    // Retransmission Interface - From Receiver
+    // ========================================================================
     // Retransmission interface
-    val retransmitSeqNum = Input(UInt(22.W))
-    val retransmitValid = Input(Bool())
-    val retransmitDone = Output(Bool())
+    val retransmitSeqNum = Input(UInt(22.W))  // Sequence number to retransmit
+    val retransmitValid = Input(Bool())       // Retransmit request valid
+    val retransmitDone = Output(Bool())       // Retransmission complete
     
+    // ========================================================================
+    // Window Slide Interface - From Receiver
+    // ========================================================================
     // Window slide interface
-    val slideSeqNumAck = Input(UInt(22.W))
-    val slideValid = Input(Bool())
-    val slideDone = Output(Bool())
+    val slideSeqNumAck = Input(UInt(22.W))  // Acknowledged sequence number
+    val slideValid = Input(Bool())          // Slide window request valid
+    val slideDone = Output(Bool())          // Window slide complete
 
+    // ========================================================================
+    // TLOE Ethernet Interface
+    // ========================================================================
     // TLOEEther Interface (simplified)
-    val txData = Output(UInt(TLOE_FRAME_SIZE.W))
-    val txFlitSize = Output(UInt(7.W))
-    val txStart = Output(Bool())
-    val txReady = Input(Bool())
+    val txData = Output(UInt(TLOE_FRAME_SIZE.W))  // TX data
+    val txFlitSize = Output(UInt(7.W))            // TX flit size
+    val txStart = Output(Bool())                  // TX start signal
+    val txReady = Input(Bool())                   // TX ready signal
 
-    val isRetransmit = Output(Bool())
+    // ========================================================================
+    // Status Outputs
+    // ========================================================================
+    val isRetransmit = Output(Bool())  // Retransmission active flag
 
-    val currTime = Input(UInt(64.W))
+    // ========================================================================
+    // Timer Interface
+    // ========================================================================
+    val currTime = Input(UInt(64.W))  // Current global time
   })
 
+  // ========================================================================
+  // Current Time Register
+  // ========================================================================
   val currTime = RegInit(0.U(64.W))
   currTime := io.currTime
 
+  // ========================================================================
+  // Retransmission Buffer
+  // ========================================================================
   // Main buffer using Queue
   val retransmitBuffer = Module(new Queue(new RetransmitBufferElement, RETRANSMIT_BUFFER_SIZE))
 
+  // ========================================================================
+  // Debug Registers
+  // ========================================================================
   // Debug
   val rt_debug_rtWValid = RegInit(false.B)
   val rt_debug_currFrame = RegInit(0.U(1024.W))
@@ -72,6 +135,9 @@ class Retransmission extends Module {
   rt_debug_currSendTime := retransmitBuffer.io.deq.bits.sendTime
   rt_debug_bufferCount := retransmitBuffer.io.count
  
+  // ========================================================================
+  // Initialization
+  // ========================================================================
   // Initialize RetransmitBufferElement Wire
   val initElement = Wire(new RetransmitBufferElement)
   initElement.tloeFrame := 0.U(TLOE_FRAME_SIZE.W)
@@ -96,8 +162,9 @@ class Retransmission extends Module {
   io.txStart := false.B
   io.txFlitSize := 0.U
 
-  //////////////////////////////////////////////////////////////////
-  // Enqueue to retransmit buffer
+  // ========================================================================
+  // Enqueue to Retransmit Buffer
+  // ========================================================================
   // Sequence number of the last element in the retransmit buffer
   val retransmitBufferLastSeqNum = RegInit(0.U(22.W))
 
@@ -114,8 +181,9 @@ class Retransmission extends Module {
     io.writeReady := false.B
   }
 
-  //////////////////////////////////////////////////////////////////
-  // Timeout Check and retransmission
+  // ========================================================================
+  // Timeout Check and Retransmission
+  // ========================================================================
   val timeoutCheck = RegInit(false.B)
   val timeoutRetransmit = RegInit(false.B)
   val lastTimeoutCheck = RegInit(0.U(64.W))
@@ -126,7 +194,7 @@ class Retransmission extends Module {
 
   // Timeout check logic using Timer's isTimeout function
   when(retransmitBuffer.io.count =/= 0.U) {
-    // Check every 10 seconds (1 billion cycles at 100MHz)
+    // Check every timeout threshold (100ms at 100MHz)
     timeoutDelta := currTime - lastTimeoutCheck
     when(timeoutDelta >= TIMEOUT_THRESHOLD) {
       timeoutCheck := true.B
@@ -143,8 +211,9 @@ class Retransmission extends Module {
     timeoutRetransmit := false.B
   }
 
-  //////////////////////////////////////////////////////////////////
-  // Retransmit
+  // ========================================================================
+  // Retransmission State Machine
+  // ========================================================================
   val isRetransmit = RegInit(false.B)
   io.isRetransmit := isRetransmit
 
@@ -183,7 +252,7 @@ class Retransmission extends Module {
         retransmitBuffer.io.deq.ready := false.B
         retransmitBuffer.io.enq.valid := false.B
       }
-      is(rtDequeue) {  // Dequeue state
+      is(rtDequeue) {  // Dequeue state - Get packet from buffer
         rt_debut_rtCnt := rt_debut_rtCnt + 1.U
 
         when(retransmitBuffer.io.deq.valid) {
@@ -199,7 +268,7 @@ class Retransmission extends Module {
           io.retransmitDone := true.B
         }
       }
-      is(rtSend) {  // Send state
+      is(rtSend) {  // Send state - Transmit packet
         retransmitBuffer.io.deq.ready := false.B
 
         when (io.txReady) {
@@ -210,7 +279,7 @@ class Retransmission extends Module {
           retransmitState := rtEnqueue
         }
       }
-      is(rtEnqueue) {  // Enqueue state
+      is(rtEnqueue) {  // Enqueue state - Put packet back in buffer with new timestamp
         // TODO merge with rtSend???
         when(retransmitBuffer.io.enq.ready) { 
           retransmitBuffer.io.enq.valid := true.B
@@ -220,13 +289,15 @@ class Retransmission extends Module {
           retransmitState := rtDone
         }
       }
-      is(rtDone) {
+      is(rtDone) {  // Done state - Check if all packets retransmitted
         val retransmitElementSeqNum = retransmitElement.tloeFrame(TLOE_FRAME_SIZE-1, TLOE_FRAME_SIZE-64).asTypeOf(new tloeHeader).seqNum  // Header bits (767, 704)
         when (TLOESeqManager.seqNumCompare(retransmitBufferLastSeqNum, retransmitElementSeqNum) === 0.S) {
+          // All packets retransmitted
           isRetransmit := false.B
           io.retransmitDone := true.B
           timeoutRetransmit := false.B
         }.otherwise {
+          // More packets to retransmit
           retransmitState := rtDequeue
         }
       }
@@ -236,8 +307,10 @@ class Retransmission extends Module {
     io.retransmitDone := false.B
   }
 
-  //////////////////////////////////////////////////////////////////
-  // Slide Window logic
+  // ========================================================================
+  // Slide Window Logic
+  // ========================================================================
+  // Slide Window logic - Remove acknowledged packets from buffer
   val isSlideWindow = RegInit(false.B)
 
   val swIdle :: swDeqCmp :: swSlide :: swDone :: Nil = Enum(4)
@@ -257,29 +330,32 @@ class Retransmission extends Module {
 
   when (isSlideWindow) {
     switch(slideWindowState) {
-      is(swIdle) {
+      is(swIdle) {  // Idle state
         retransmitBuffer.io.deq.ready := false.B
         retransmitBuffer.io.enq.valid := false.B
       }
-      is(swDeqCmp) {
+      is(swDeqCmp) {  // Dequeue and compare state - Check if packet should be removed
         when(retransmitBuffer.io.deq.valid) {
           val element = retransmitBuffer.io.deq.bits
           val elementSeqNum = element.tloeFrame(TLOE_FRAME_SIZE-1, TLOE_FRAME_SIZE-64).asTypeOf(new tloeHeader).seqNum  // Header bits (767, 704)
 
           when (TLOESeqManager.seqNumCompare(elementSeqNum, rt_slideSeqNumAck) <= 0.S) {
+            // Packet is acknowledged - remove it
             slideWindowState := swSlide  // TODO Merge..??
           }.otherwise {
+            // Packet not yet acknowledged - stop sliding
             slideWindowState := swDone
           }
         }.otherwise {
+          // Buffer empty - done
           slideWindowState := swDone
         }
       }
-      is(swSlide) {
+      is(swSlide) {  // Slide state - Remove acknowledged packet
         retransmitBuffer.io.deq.ready := true.B
         slideWindowState := swDeqCmp
       }
-      is(swDone) {
+      is(swDone) {  // Done state - Window slide complete
         isSlideWindow := false.B
         io.slideDone := true.B
         slideWindowState := swIdle

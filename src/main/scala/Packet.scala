@@ -5,21 +5,38 @@ import chisel3.util._
 
 import OmniXtendConstants._
 
+// ========================================================================
+// OXPacket Object - Packet Generation Utilities
+// ========================================================================
+/**
+ * OXPacket object provides utility functions for generating TLOE packets.
+ * 
+ * This object contains functions to create different types of TLOE packets:
+ * - normalAck: Normal acknowledgment packets
+ * - ackonly: ACK-only packets
+ * - initFrame: Initial frame packets with TileLink data
+ */
 object OXPacket {
+  // ========================================================================
+  // Normal ACK Packet Generation
+  // ========================================================================
   /** Creates a normal acknowledgment (ACK) packet.
+    *
+    * This function generates a TLOE packet containing acknowledgment information
+    * without any TileLink message data. Used for acknowledging received packets.
     *
     * @param seq
     *   Sequence number for the packet.
     * @param seq_ack
     *   Sequence number being acknowledged.
     * @param ack
-    *   Acknowledgment flag.
+    *   Acknowledgment flag (ACK/NAK).
     * @param chan
     *   Channel ID.
     * @param credit
-    *   Updated credit.
+    *   Updated credit value.
     * @return
-    *   A UInt representing the full packet with padding.
+    *   A UInt representing the full packet with padding to TLOE_FRAME_SIZE.
     */
   def normalAck(seq: UInt, seq_ack: UInt, ack: UInt, chan: UInt, credit: UInt): UInt = {
     // Create a new instance of the TloePacket (a user-defined bundle)
@@ -58,6 +75,22 @@ object OXPacket {
     packetWithPadding
   }
 
+  // ========================================================================
+  // ACK-Only Packet Generation
+  // ========================================================================
+  /**
+   * Creates an ACK-only packet.
+   * 
+   * This function generates a TLOE packet with message type ACKONLY.
+   * Used for sending acknowledgments without any other data.
+   *
+   * @param seq Sequence number for the packet
+   * @param seq_ack Sequence number being acknowledged
+   * @param ack Acknowledgment flag (ACK/NAK)
+   * @param chan Channel ID
+   * @param credit Credit value
+   * @return A UInt representing the full ACK-only packet with padding
+   */
   def ackonly(seq: UInt, seq_ack: UInt, ack: UInt, chan: UInt, credit: UInt): UInt = {
     // Create a new instance of the TloePacket (a user-defined bundle)
     val tloeFrame = Wire(new tloeFrame)
@@ -95,6 +128,30 @@ object OXPacket {
     packetWithPadding
   }
 
+  // ========================================================================
+  // Initial Frame Packet Generation
+  // ========================================================================
+  /**
+   * Creates an initial frame packet with TileLink message data.
+   * 
+   * This function generates a TLOE packet containing TileLink transaction data.
+   * It handles different TileLink operations (PutFullData, Get, AccessAck, AccessAckData)
+   * and formats the packet appropriately with headers, data, mask, and padding.
+   *
+   * @param txChan TileLink channel (CHANNEL_A or CHANNEL_D)
+   * @param txAddr TileLink address
+   * @param txOpcode TileLink operation code
+   * @param txData TileLink data payload
+   * @param seqNum Sequence number for this packet
+   * @param seqNumAck Acknowledged sequence number
+   * @param ackType Acknowledgment type (ACK/NAK)
+   * @param char Channel ID for credit management
+   * @param credit Credit value
+   * @param size Transfer size (log2 of bytes)
+   * @param param TileLink parameter
+   * @param source TileLink source ID
+   * @return A UInt representing the full frame packet with padding
+   */
   def initFrame(txChan: UInt, txAddr: UInt, txOpcode: UInt, txData: UInt, seqNum: UInt, seqNumAck: UInt, ackType: UInt, char: UInt, credit: UInt, size: UInt, param: UInt, source: UInt): UInt = {
     // Create a new instance of the TloePacket (a user-defined bundle)
     val tloeFrame = Wire(new tloeFrame)
@@ -102,6 +159,9 @@ object OXPacket {
     // packetWithPadding 초기화 수정
     val packetWithPadding = WireInit(0.U(TLOE_FRAME_SIZE.W))
 
+    // ========================================================================
+    // Populate TLOE Header Fields
+    // ========================================================================
     // Populate the OmniXtend header fields
     tloeFrame.tloeHeader.vc := 0.U // Virtual Channel ID
     tloeFrame.tloeHeader.msgType := 0.U // Message Type 0 (Normal)
@@ -113,7 +173,11 @@ object OXPacket {
     tloeFrame.tloeHeader.chan := char // Channel ID
     tloeFrame.tloeHeader.credit := credit // Credit field
 
+    // ========================================================================
+    // Handle Different TileLink Operations
+    // ========================================================================
     // txOpcode 비교 수정
+    // Case 1: Channel A - PutFullData (write operation with data)
     when(txChan === CHANNEL_A && txOpcode === A_PUTFULLDATA_OPCODE) {
       // Populate the high part of the TileLink message fields
       tloeFrame.tlMsgHigh.res1 := 0.U // Reserved field 1
@@ -129,9 +193,8 @@ object OXPacket {
 
       // Populate the low part of the TileLink message fields
       tloeFrame.tlMsgLow.addr := txAddr
-      //tloePacket.tlMsgLow.addr := txData(63, 0)
-      //tloePacket.tlMsgLow.addr := txData(511, 448)
-
+      //tloePacket.tlMsgLow.addr := txData(63, 0)  // Unused
+      //tloePacket.tlMsgLow.addr := txData(511, 448)  // Unused
 
       // Define Padding and Mask
       val mask = "h0000000000000001".U(64.W) // 64-bit mask, all bits set to 1
@@ -153,6 +216,7 @@ object OXPacket {
           }
         }
       }
+    // Case 2: Channel A - Get (read operation, no data)
     }.elsewhen(txChan === CHANNEL_A && txOpcode === A_GET_OPCODE) {
       tloeFrame.tlMsgHigh.res1 := 0.U // Reserved field 1
       tloeFrame.tlMsgHigh.chan := txChan // Channel ID (A)
@@ -176,6 +240,7 @@ object OXPacket {
       val paddingSize = TLOE_FRAME_SIZE - frameWidth - 128 - 64
       packetWithPadding := Cat(tloeFrame.asUInt, 0.U(128.W), mask, 0.U(paddingSize.W))
 
+    // Case 3: Channel D - AccessAck (acknowledgment without data)
     }.elsewhen(txChan === CHANNEL_D && txOpcode === D_ACCESSACK_OPCODE) {  // AccessAck
       tloeFrame.tlMsgHigh.res1 := 0.U // Reserved field 1
       tloeFrame.tlMsgHigh.chan := txChan // Channel ID (A)
@@ -199,6 +264,7 @@ object OXPacket {
       val paddingSize = TLOE_FRAME_SIZE - frameWidth - 128 - 64
       packetWithPadding := Cat(tloeFrame.asUInt, 0.U(128.W), mask, 0.U(paddingSize.W))
 
+    // Case 4: Channel D - AccessAckData (acknowledgment with read data)
     }.elsewhen(txChan === CHANNEL_D && txOpcode === D_ACCESSACKDATA_OPCODE) {  // AccessAckData
       tloeFrame.tlMsgHigh.res1 := 0.U // Reserved field 1
       tloeFrame.tlMsgHigh.chan := txChan // Channel ID (A)
@@ -212,7 +278,7 @@ object OXPacket {
       tloeFrame.tlMsgHigh.source := source // Source field
 
       // Populate the low part of the TileLink message fields
-      tloeFrame.tlMsgLow.addr := 0.U // Not used
+      tloeFrame.tlMsgLow.addr := 0.U // Not used for data response
 
       // Define Padding and Mask
       val mask = "h0000000000000001".U(64.W) // 64-bit mask, all bits set to 1
@@ -237,6 +303,7 @@ object OXPacket {
       //TODO
       packetWithPadding := Cat(tloePacket.asUInt(303, 64), txData, mask, 0.U(3520.W), 0.U(16.W))
 */
+    // Case 5: Otherwise (unknown operation) - empty packet
     }.otherwise {
       tloeFrame.tlMsgHigh.res1 := 0.U // Reserved field 1
       tloeFrame.tlMsgHigh.chan := 0.U // Channel ID (A)
@@ -255,14 +322,14 @@ object OXPacket {
       // Define Padding and Mask
       val mask = "h0000000000000000".U(64.W) // 64-bit mask, all bits set to 0
 
-      // Otherwise case: just header + padding
+      // Otherwise case: just header + padding (no data)
       val frameWidth = tloeFrame.asUInt.getWidth
       val paddingSize = TLOE_FRAME_SIZE - frameWidth
       packetWithPadding := Cat(tloeFrame.asUInt, 0.U(paddingSize.W))
     }
     packetWithPadding
   }
-  //////////////////////////////////////////////////////////////
-  // DEBUG
-  //////////////////////////////////////////////////////////////
+  // ========================================================================
+  // End of OXPacket Object
+  // ========================================================================
 }
