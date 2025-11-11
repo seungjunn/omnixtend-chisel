@@ -136,17 +136,21 @@ object OXPacket {
       // Define Padding and Mask
       val mask = "h0000000000000001".U(64.W) // 64-bit mask, all bits set to 1
 
-      // packetWithPadding 정의
-      // TLOE_FRAME_SIZE = 768 bits, tloeFrame = 192 bits
-      // Format: [tloeFrame(192)][data][mask(64)][padding to 768]
+      // Calculate padding dynamically based on TLOE_FRAME_SIZE
+      // Format: [tloeFrame][data][mask(64)][padding]
+      val frameWidth = tloeFrame.asUInt.getWidth
       switch(size) {
         is(5.U) {  // 32 Bytes = 256 bits
-          // 192 + 256 + 64 + 256 = 768
-          packetWithPadding := Cat(tloeFrame.asUInt, txData(255, 0), mask, 0.U(256.W))
+          val paddingSize = TLOE_FRAME_SIZE - frameWidth - 256 - 64
+          packetWithPadding := Cat(tloeFrame.asUInt, txData(255, 0), mask, 0.U(paddingSize.W))
         }
         is(6.U) {  // 64 Bytes = 512 bits
-          // 192 + 512 + 64 + 0 = 768
-          packetWithPadding := Cat(tloeFrame.asUInt, txData(511, 0), mask)
+          val paddingSize = TLOE_FRAME_SIZE - frameWidth - 512 - 64
+          if (paddingSize > 0) {
+            packetWithPadding := Cat(tloeFrame.asUInt, txData(511, 0), mask, 0.U(paddingSize.W))
+          } else {
+            packetWithPadding := Cat(tloeFrame.asUInt, txData(511, 0), mask)
+          }
         }
       }
     }.elsewhen(txChan === CHANNEL_A && txOpcode === A_GET_OPCODE) {
@@ -167,9 +171,10 @@ object OXPacket {
       // Define Padding and Mask
       val mask = "h0000000000000001".U(64.W) // 64-bit mask, all bits set to 1
 
-      // GET has no data payload, just header + mask + padding
-      // 192 + 128 + 64 + 384 = 768
-      packetWithPadding := Cat(tloeFrame.asUInt, 0.U(128.W), mask, 0.U(384.W))
+      // GET has no data payload, just header + reserved + mask + padding
+      val frameWidth = tloeFrame.asUInt.getWidth
+      val paddingSize = TLOE_FRAME_SIZE - frameWidth - 128 - 64
+      packetWithPadding := Cat(tloeFrame.asUInt, 0.U(128.W), mask, 0.U(paddingSize.W))
 
     }.elsewhen(txChan === CHANNEL_D && txOpcode === D_ACCESSACK_OPCODE) {  // AccessAck
       tloeFrame.tlMsgHigh.res1 := 0.U // Reserved field 1
@@ -190,8 +195,9 @@ object OXPacket {
       val mask = "h0000000000000001".U(64.W) // 64-bit mask, all bits set to 1
 
       // AccessAck has no data payload
-      // 192 + 128 + 64 + 384 = 768
-      packetWithPadding := Cat(tloeFrame.asUInt, 0.U(128.W), mask, 0.U(384.W))
+      val frameWidth = tloeFrame.asUInt.getWidth
+      val paddingSize = TLOE_FRAME_SIZE - frameWidth - 128 - 64
+      packetWithPadding := Cat(tloeFrame.asUInt, 0.U(128.W), mask, 0.U(paddingSize.W))
 
     }.elsewhen(txChan === CHANNEL_D && txOpcode === D_ACCESSACKDATA_OPCODE) {  // AccessAckData
       tloeFrame.tlMsgHigh.res1 := 0.U // Reserved field 1
@@ -214,9 +220,16 @@ object OXPacket {
       // Data response packet
       switch(size) {
         is(6.U) {  // 64 Bytes = 512 bits
-          // Format: [tloeHeader+tlMsgHigh(128)][data(512)][mask(64)][padding(64)] = 768
+          // Format: [tloeHeader+tlMsgHigh][data(512)][mask(64)][padding]
           // Skip tlMsgLow.addr (not used for data response)
-          packetWithPadding := Cat(tloeFrame.asUInt(191, 64), txData(511, 0), mask, 0.U(64.W))
+          val frameWidth = tloeFrame.asUInt.getWidth
+          val headerOnlyWidth = frameWidth - 64  // Exclude tlMsgLow
+          val paddingSize = TLOE_FRAME_SIZE - headerOnlyWidth - 512 - 64
+          if (paddingSize > 0) {
+            packetWithPadding := Cat(tloeFrame.asUInt(frameWidth-1, 64), txData(511, 0), mask, 0.U(paddingSize.W))
+          } else {
+            packetWithPadding := Cat(tloeFrame.asUInt(frameWidth-1, 64), txData(511, 0), mask)
+          }
         }
       }
  
@@ -243,8 +256,9 @@ object OXPacket {
       val mask = "h0000000000000000".U(64.W) // 64-bit mask, all bits set to 0
 
       // Otherwise case: just header + padding
-      // 192 + 576 = 768
-      packetWithPadding := Cat(tloeFrame.asUInt, 0.U(576.W))
+      val frameWidth = tloeFrame.asUInt.getWidth
+      val paddingSize = TLOE_FRAME_SIZE - frameWidth
+      packetWithPadding := Cat(tloeFrame.asUInt, 0.U(paddingSize.W))
     }
     packetWithPadding
   }

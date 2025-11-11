@@ -145,13 +145,6 @@ class TLOEReceiver extends Module {
   val rxFlitSize = RegInit(0.U(7.W))
   val rxFrameInput = Reg(UInt(TLOE_FRAME_SIZE.W))  // Single register instead of Vec
 
-  // Debug registers removed to save LUTs
-  val rx_debug_rxState = RegInit(0.U(8.W))
-  rx_debug_rxState := rxState
-
-  val rx_debug_rxFrame = RegInit(0.U(512.W))
-  rx_debug_rxFrame := rxFrameInput(767, 256)
-
   when (io.rxValid) {
     rxReadyReg := false.B
     // Extract TLOE header from top of frame (64 bits)
@@ -283,21 +276,4 @@ class TLOEReceiver extends Module {
   //////////////////////////////////////////////////////////////
   // DEBUG - removed to save LUTs
   //////////////////////////////////////////////////////////////
-  dontTouch(rx_debug_rxState)
-  dontTouch(rx_debug_rxFrame)
-  /*
-  dontTouch(rxState)
-
-  dontTouch(tloeHeader)
-  dontTouch(tlHeader)
-  dontTouch(rxFrameMask)
-  dontTouch(do_tilelink_handler)
-  dontTouch(rxRequiredFlits)
-  dontTouch(incAccCreditValid)
-  dontTouch(incAccCreditChannel)
-  dontTouch(incAccCreditAmount)
-
-  dontTouch(rxReadyReg)
-  dontTouch(ackAckonlyReg)
-  */
 } 

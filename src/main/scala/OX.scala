@@ -126,10 +126,12 @@ class OmniXtendNode(implicit p: Parameters) extends LazyModule {
     TLOEEndpoint.io.setSrcMac  := 0.U
     TLOEEndpoint.io.setDestMac := 0.U
 
+/*
     val debug_onInSource = RegInit(0.U(26.W))
     val debug_onInOpcode = RegInit(0.U(3.W))
 
     val debug_oxMACReg = RegInit(0.U(64.W))
+    */
 
     // When the input channel 'a' is ready and valid
     when (in.a.fire) {
@@ -143,8 +145,10 @@ class OmniXtendNode(implicit p: Parameters) extends LazyModule {
       TLOEEndpoint.io.tlSource := in.a.bits.source
       TLOEEndpoint.io.tlParam  := in.a.bits.param
 
+/*
        debug_onInSource := in.a.bits.source
        debug_onInOpcode := in.a.bits.opcode
+       */
 
       TLOEEndpoint.io.tlValid  := true.B // Mark the transmission as valid
     }
@@ -165,6 +169,7 @@ class OmniXtendNode(implicit p: Parameters) extends LazyModule {
     in.d.bits.data    := 0.U
     in.d.bits.corrupt := false.B
 
+/*
     // Debug
     val ep_rxData = RegInit(0.U(512.W))
     val ep_rxValid = RegInit(false.B)
@@ -181,6 +186,7 @@ class OmniXtendNode(implicit p: Parameters) extends LazyModule {
     debug_oxSize := tilelinkHandler.io.ep_rxSize
     debug_oxSource := tilelinkHandler.io.ep_rxSource
     debug_oxDValid := in.d.valid
+    */
 
     when (tilelinkHandler.io.ep_rxValid) {                 // RX valid signal received from Ethernet IP
       in.d.valid        := true.B                          // Mark the response as valid
