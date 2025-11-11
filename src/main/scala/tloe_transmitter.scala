@@ -2,7 +2,6 @@ package omnixtend
 
 import chisel3._
 import chisel3.util._
-import chisel3.util.random.LFSR
 
 import OmniXtendConstants._
 import TloePacGen._
@@ -178,17 +177,26 @@ class TLOETransmitter extends Module {
   // Debug - test read/write address generation
   val testReadAddr = RegInit(0x1000.U(64.W))
   val testWriteAddr = RegInit(0x1000.U(64.W))
-  // Generate random 512-bit data using 8 LFSRs (64-bit each)
-  // Each LFSR uses a different seed to ensure different sequences
-  val lfsr0 = LFSR(64, seed = Some(BigInt("1234567890ABCDEF", 16)))
-  val lfsr1 = LFSR(64, seed = Some(BigInt("FEDCBA0987654321", 16)))
-  val lfsr2 = LFSR(64, seed = Some(BigInt("ABCDEF0123456789", 16)))
-  val lfsr3 = LFSR(64, seed = Some(BigInt("9876543210FEDCBA", 16)))
-  val lfsr4 = LFSR(64, seed = Some(BigInt("13579BDF02468ACE", 16)))
-  val lfsr5 = LFSR(64, seed = Some(BigInt("2468ACE13579BDF0", 16)))
-  val lfsr6 = LFSR(64, seed = Some(BigInt("5A5A5A5A5A5A5A5A", 16)))
-  val lfsr7 = LFSR(64, seed = Some(BigInt("A5A5A5A5A5A5A5A5", 16)))
-  val testWriteData = Cat(lfsr7, lfsr6, lfsr5, lfsr4, lfsr3, lfsr2, lfsr1, lfsr0)
+  
+  // ASCII payload messages (512 bits = 64 bytes each)
+  // Pad with spaces to exactly 64 bytes
+  def asciiTo512Bits(s: String): UInt = {
+    val bytes = s.getBytes("ASCII").take(64)
+    val padded = bytes.padTo(64, 0x20.toByte) // Pad with space (0x20)
+    val hexString = padded.map(b => f"$b%02x").mkString
+    BigInt(hexString, 16).U(512.W)
+  }
+  
+  val payload0 = asciiTo512Bits("1: Hello from OmniXtend! This is test message #1. Testing 512-bit payload.")
+  val payload1 = asciiTo512Bits("2: OmniXtend TLOE Protocol Test Message #2. Checking data integrity...")
+  val payload2 = asciiTo512Bits("3: Round-robin test payload #3. Verifying packet transmission works.")
+  val payload3 = asciiTo512Bits("4: ASCII payload test #4. This message cycles through 5 different texts.")
+  val payload4 = asciiTo512Bits("5: Final test message #5. All payloads should be readable ASCII text.")
+  
+  val payloadVec = VecInit(Seq(payload0, payload1, payload2, payload3, payload4))
+  val payloadIndex = RegInit(0.U(3.W))  // 0-4 index for 5 payloads
+  
+  val testWriteData = payloadVec(payloadIndex)
   val debugEnqueuePending = RegInit(false.B)
   val debug2EnqueuePending = RegInit(false.B)
   
@@ -241,7 +249,8 @@ class TLOETransmitter extends Module {
       txQueue.io.enq.valid := true.B
       
       testWriteAddr := testWriteAddr + 0x1000.U
-      // testWriteData is now generated randomly each cycle via LFSRs, no need to update
+      // Round-robin through 5 ASCII payloads
+      payloadIndex := Mux(payloadIndex === 4.U, 0.U, payloadIndex + 1.U)
       debug2EnqueuePending := true.B
     }
   }.elsewhen(!io.debug1 && !io.debug2) {
