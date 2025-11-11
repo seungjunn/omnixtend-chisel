@@ -137,39 +137,17 @@ object OXPacket {
       val mask = "h0000000000000001".U(64.W) // 64-bit mask, all bits set to 1
 
       // packetWithPadding 정의
+      // TLOE_FRAME_SIZE = 768 bits, tloeFrame = 192 bits
+      // Format: [tloeFrame(192)][data][mask(64)][padding to 768]
       switch(size) {
-        /*
-        is(0.U) {  // 0 Bytes
-          packetWithPadding := Cat(tloePacket.asUInt, txData(7, 0), 0.U(56.W), 0.U(128.W), mask, 0.U(16.W), 0.U(320.W));
+        is(5.U) {  // 32 Bytes = 256 bits
+          // 192 + 256 + 64 + 256 = 768
+          packetWithPadding := Cat(tloeFrame.asUInt, txData(255, 0), mask, 0.U(256.W))
         }
-        is(1.U) {  // 2 Bytes
-          packetWithPadding := Cat(tloePacket.asUInt, txData(15, 0), 0.U(48.W), 0.U(128.W), mask, 0.U(16.W), 0.U(320.W));
+        is(6.U) {  // 64 Bytes = 512 bits
+          // 192 + 512 + 64 + 0 = 768
+          packetWithPadding := Cat(tloeFrame.asUInt, txData(511, 0), mask)
         }
-        is(2.U) {  // 4 Bytes
-          packetWithPadding := Cat(tloePacket.asUInt, txData(31, 0), 0.U(32.W), 0.U(128.W), mask, 0.U(16.W), 0.U(320.W));
-        }
-        is(3.U) {  // 8 Bytes
-          packetWithPadding := Cat(tloePacket.asUInt, txData(63, 0), 0.U(128.W), mask, 0.U(16.W), 0.U(320.W));
-        }
-        is(4.U) {  // 16 Bytes
-          packetWithPadding := Cat(tloePacket.asUInt, txData(127, 0), 0.U(64.W), mask, 0.U(16.W), 0.U(320.W));
-        }
-        */
-        is(5.U) {  // 32 Bytes
-          packetWithPadding := Cat(tloeFrame.asUInt, txData(255, 0), mask, 0.U(256.W), 0.U(3456.W))
-        }
-        is(6.U) {  // 64 Bytes
-          packetWithPadding := Cat(tloeFrame.asUInt, txData(511, 0), mask, 0.U(3456.W))
-        }
-        /*
-        is(5.U) {  // 32 Bytes
-          packetWithPadding := Cat(tloePacket.asUInt, txData(255, 0), mask, 0.U(16.W), 0.U(256.W));
-        }
-        is(6.U) {  // 64 Bytes
-          packetWithPadding := Cat(tloePacket.asUInt, txData(511, 0), mask, 0.U(16.W))
-          //packetWithPadding := Cat(tloePacket.asUInt, txData(447, 0), mask, 0.U(64.W), 0.U(16.W))
-        }
-        */
       }
     }.elsewhen(txChan === CHANNEL_A && txOpcode === A_GET_OPCODE) {
       tloeFrame.tlMsgHigh.res1 := 0.U // Reserved field 1
@@ -189,7 +167,9 @@ object OXPacket {
       // Define Padding and Mask
       val mask = "h0000000000000001".U(64.W) // 64-bit mask, all bits set to 1
 
-      packetWithPadding := Cat(tloeFrame.asUInt, 0.U(128.W), mask, 0.U(3840.W))
+      // GET has no data payload, just header + mask + padding
+      // 192 + 128 + 64 + 384 = 768
+      packetWithPadding := Cat(tloeFrame.asUInt, 0.U(128.W), mask, 0.U(384.W))
 
     }.elsewhen(txChan === CHANNEL_D && txOpcode === D_ACCESSACK_OPCODE) {  // AccessAck
       tloeFrame.tlMsgHigh.res1 := 0.U // Reserved field 1
@@ -209,7 +189,9 @@ object OXPacket {
       // Define Padding and Mask
       val mask = "h0000000000000001".U(64.W) // 64-bit mask, all bits set to 1
 
-      packetWithPadding := Cat(tloeFrame.asUInt, 0.U(128.W), mask, 0.U(3840.W))
+      // AccessAck has no data payload
+      // 192 + 128 + 64 + 384 = 768
+      packetWithPadding := Cat(tloeFrame.asUInt, 0.U(128.W), mask, 0.U(384.W))
 
     }.elsewhen(txChan === CHANNEL_D && txOpcode === D_ACCESSACKDATA_OPCODE) {  // AccessAckData
       tloeFrame.tlMsgHigh.res1 := 0.U // Reserved field 1
@@ -229,11 +211,12 @@ object OXPacket {
       // Define Padding and Mask
       val mask = "h0000000000000001".U(64.W) // 64-bit mask, all bits set to 1
 
-      // TODO Data
+      // Data response packet
       switch(size) {
-        is(6.U) {  // 64 Bytes
-          // tloePacket의 하위 64비트를 제거하고, 그 부분부터 txData와 mask를 연결
-          packetWithPadding := Cat(tloeFrame.asUInt(191, 64), txData(511, 0), mask, 0.U(64.W), 0.U(3456.W))
+        is(6.U) {  // 64 Bytes = 512 bits
+          // Format: [tloeHeader+tlMsgHigh(128)][data(512)][mask(64)][padding(64)] = 768
+          // Skip tlMsgLow.addr (not used for data response)
+          packetWithPadding := Cat(tloeFrame.asUInt(191, 64), txData(511, 0), mask, 0.U(64.W))
         }
       }
  
@@ -257,9 +240,11 @@ object OXPacket {
       tloeFrame.tlMsgLow.addr := 0.U // TileLink address (input parameter)
 
       // Define Padding and Mask
-      val mask = "h0000000000000000".U(64.W) // 64-bit mask, all bits set to 1
+      val mask = "h0000000000000000".U(64.W) // 64-bit mask, all bits set to 0
 
-      packetWithPadding := Cat(tloeFrame.asUInt, 0.U(592.W))
+      // Otherwise case: just header + padding
+      // 192 + 576 = 768
+      packetWithPadding := Cat(tloeFrame.asUInt, 0.U(576.W))
     }
     packetWithPadding
   }
