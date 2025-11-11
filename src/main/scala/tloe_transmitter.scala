@@ -2,6 +2,7 @@ package omnixtend
 
 import chisel3._
 import chisel3.util._
+import chisel3.util.random.LFSR
 
 import OmniXtendConstants._
 import TloePacGen._
@@ -177,8 +178,17 @@ class TLOETransmitter extends Module {
   // Debug - test read/write address generation
   val testReadAddr = RegInit(0x1000.U(64.W))
   val testWriteAddr = RegInit(0x1000.U(64.W))
-  // Fill entire 512 bits with DEADBEEF pattern (16 repetitions of 32-bit DEADBEEF)
-  val testWriteData = RegInit("hDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF".U(512.W))
+  // Generate random 512-bit data using 8 LFSRs (64-bit each)
+  // Each LFSR uses a different seed to ensure different sequences
+  val lfsr0 = LFSR(64, seed = Some(BigInt("1234567890ABCDEF", 16)))
+  val lfsr1 = LFSR(64, seed = Some(BigInt("FEDCBA0987654321", 16)))
+  val lfsr2 = LFSR(64, seed = Some(BigInt("ABCDEF0123456789", 16)))
+  val lfsr3 = LFSR(64, seed = Some(BigInt("9876543210FEDCBA", 16)))
+  val lfsr4 = LFSR(64, seed = Some(BigInt("13579BDF02468ACE", 16)))
+  val lfsr5 = LFSR(64, seed = Some(BigInt("2468ACE13579BDF0", 16)))
+  val lfsr6 = LFSR(64, seed = Some(BigInt("5A5A5A5A5A5A5A5A", 16)))
+  val lfsr7 = LFSR(64, seed = Some(BigInt("A5A5A5A5A5A5A5A5", 16)))
+  val testWriteData = Cat(lfsr7, lfsr6, lfsr5, lfsr4, lfsr3, lfsr2, lfsr1, lfsr0)
   val debugEnqueuePending = RegInit(false.B)
   val debug2EnqueuePending = RegInit(false.B)
   
@@ -231,7 +241,7 @@ class TLOETransmitter extends Module {
       txQueue.io.enq.valid := true.B
       
       testWriteAddr := testWriteAddr + 0x1000.U
-      testWriteData := testWriteData + 1.U
+      // testWriteData is now generated randomly each cycle via LFSRs, no need to update
       debug2EnqueuePending := true.B
     }
   }.elsewhen(!io.debug1 && !io.debug2) {
